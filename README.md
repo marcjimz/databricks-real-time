@@ -46,6 +46,10 @@ The demo is more than the app: the same live records are queryable **at every la
 — the raw Delta landing table, the DLT-managed **streaming tables**, and the Lakebase
 Postgres serving layer. Every query below is run against the live demo.
 
+> **Notebook:** the UC queries below are also in `notebooks/hl7_rti_queries.py` (synced
+> to the workspace by `bundle deploy`), with `catalog` / `schema` widgets that default to
+> the demo's values — just attach and run.
+
 > UC tables (`bronze_*`, `silver_*`) → any SQL warehouse / notebook on catalog
 > `real_time_mode_demo_catalog`, schema `rti_demo`.
 > Lakebase tables (`rt_*`) → the Postgres serving endpoint (psql / any Postgres client).
