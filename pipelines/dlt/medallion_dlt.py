@@ -23,10 +23,30 @@ from __future__ import annotations
 import os
 import sys
 
-# Make the bundle files root importable so `pipelines.lib.*` / `pipelines.dlt.*`
-# resolve. This file lives at <root>/pipelines/dlt/medallion_dlt.py, so the root
-# is two directories up. DLT provides __file__ for pipeline source modules.
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Make the bundle files root (the dir CONTAINING `pipelines/`) importable so
+# `pipelines.lib.*` / `pipelines.dlt.*` resolve. DLT runs this source as a
+# notebook cell, so __file__ is NOT defined — instead walk up from the current
+# working directory looking for the `pipelines` package, and fall back to
+# scanning sys.path entries. Robust to however DLT sets the working dir.
+def _find_bundle_root():
+    seen = []
+    start = os.getcwd()
+    d = start
+    for _ in range(8):
+        if os.path.isdir(os.path.join(d, "pipelines", "lib")):
+            return d
+        seen.append(d)
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    # fall back: any sys.path entry that contains pipelines/lib
+    for p in list(sys.path):
+        if p and os.path.isdir(os.path.join(p, "pipelines", "lib")):
+            return p
+    return start
+
+_ROOT = _find_bundle_root()
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
@@ -57,12 +77,32 @@ _PARSED_SCHEMA = StructType([
 ])
 
 
+# Read the pure-Python HL7 parser source ON THE DRIVER and ship it inside the
+# UDF closure. Executors never ran the driver sys.path shim and the pipeline
+# package isn't importable there (ModuleNotFoundError: 'pipelines'), so instead
+# of importing on the executor we exec the source into a namespace inside the
+# UDF. The parser is stdlib-only (dataclasses), so this is fully self-contained.
+def _read_parser_source() -> str:
+    import os
+    for p in [_ROOT] + list(sys.path):
+        cand = os.path.join(p, "pipelines", "lib", "hl7_parser.py")
+        if p and os.path.isfile(cand):
+            with open(cand) as fh:
+                return fh.read()
+    raise FileNotFoundError("hl7_parser.py not found on driver")
+
+
+_PARSER_SRC = _read_parser_source()
+
+
 @pandas_udf(_PARSED_SCHEMA)
 def _parse_udf(hl7_raw: pd.Series) -> pd.DataFrame:
-    """Vectorised HL7 parse; one struct row per message. Imports the parser
-    lazily so the closure is self-contained on serverless executors (the parser
-    module is shipped with the pipeline; no internet needed — parsing is pure)."""
-    from pipelines.lib.hl7_parser import parse_hl7
+    """Vectorised HL7 parse; one struct row per message. The parser is exec'd
+    from source captured on the driver (_PARSER_SRC) so it runs on any executor
+    with no filesystem/package dependency."""
+    _ns: dict = {}
+    exec(_PARSER_SRC, _ns)
+    parse_hl7 = _ns["parse_hl7"]
 
     rows = []
     for raw in hl7_raw:
@@ -134,32 +174,21 @@ def silver_hl7_quarantine():
 
 
 # --- Lakebase serving sink (Option A: sub-second serving via foreach_batch) ---
-# The valid silver stream feeds a foreach_batch_sink that upserts the live tail
-# and writes stage metrics into Lakebase — the tables the dashboard reads.
+# A foreach_batch_sink decorates a (df, batch_id) function that upserts the live
+# tail + writes stage metrics into Lakebase (the tables the dashboard reads).
+# An append_flow feeds the valid silver stream into it. NOTE: the sink is the
+# `@dlt.foreach_batch_sink` decorator — NOT create_sink(..., "foreach_batch").
 from pipelines.dlt.lakebase_sink import write_serving  # noqa: E402
 
 
-dlt.create_sink(
-    name="lakebase_serving",
-    func=lambda df, batch_id: write_serving(spark, df, batch_id),
-)
+@dlt.foreach_batch_sink(name="lakebase_serving")
+def _lakebase_serving(df, batch_id):
+    write_serving(spark, df, batch_id)
 
 
 @dlt.append_flow(target="lakebase_serving")
 def to_lakebase():
-    # Re-read the valid silver stream (same transform) to feed the sink. Using
-    # the source stream (not dlt.read_stream of the managed table) keeps the
-    # full row incl. ts_* hops available to the sink.
-    return (
-        _parsed_stream()
-        .filter(F.col("p.ok") == "1")
-        .select(
-            "event_id", "source_path",
-            F.col("p.facility_id").alias("facility_id"),
-            F.col("p.message_type").alias("message_type"),
-            F.col("p.patient_mrn").alias("patient_mrn"),
-            F.col("p.unit").alias("unit"),
-            F.col("p.summary").alias("summary"),
-            "ts_generated", "ts_transport", "ts_bronze", "ts_silver",
-        )
-    )
+    # Stream the ALREADY-MATERIALIZED silver table into the sink (not a second
+    # bronze re-parse) — halves the parse load and reuses the exact rows written
+    # to silver, which already carry all ts_* hops.
+    return dlt.read_stream("silver_hl7_parsed")

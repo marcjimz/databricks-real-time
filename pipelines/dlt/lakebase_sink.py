@@ -52,7 +52,13 @@ def _lakebase_token(spark) -> str:
 
 
 def _lakebase_conn(spark):
-    """A reused psycopg connection to Lakebase (None when unconfigured)."""
+    """A reused psycopg connection to Lakebase (None when unconfigured).
+
+    Reused across micro-batches (opened once). Retries with backoff on Lakebase's
+    "connection attempt rate limit" — the sink opening/reopening connections in a
+    burst (e.g. after a restart, or the token refresh) can trip it; a short
+    backoff lets the limiter recover instead of failing the whole batch.
+    """
     host = _cfg(spark, "lakebase_host")
     if not host:
         return None
@@ -61,17 +67,27 @@ def _lakebase_conn(spark):
     conn = _LB_CONN.get("conn")
     if conn is not None and not conn.closed:
         return conn
-    _LB_CONN["conn"] = psycopg.connect(
-        host=host,
-        port=int(_cfg(spark, "lakebase_port", "5432")),
-        dbname=_cfg(spark, "lakebase_database", "rti_demo"),
-        user=_cfg(spark, "lakebase_user"),
-        password=_lakebase_token(spark),
-        sslmode="require",
-        connect_timeout=10,
-        autocommit=True,
-    )
-    return _LB_CONN["conn"]
+    last_exc = None
+    for attempt in range(5):
+        try:
+            _LB_CONN["conn"] = psycopg.connect(
+                host=host,
+                port=int(_cfg(spark, "lakebase_port", "5432")),
+                dbname=_cfg(spark, "lakebase_database", "rti_demo"),
+                user=_cfg(spark, "lakebase_user"),
+                password=_lakebase_token(spark),
+                sslmode="require",
+                connect_timeout=10,
+                autocommit=True,
+            )
+            return _LB_CONN["conn"]
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if "rate limit" in str(exc).lower():
+                time.sleep(2.0 * (attempt + 1))  # 2,4,6,8,10s backoff
+                continue
+            raise
+    raise last_exc
 
 
 def _drop_conn() -> None:
