@@ -245,7 +245,7 @@ class LakebaseClient:
         if not self.configured:
             return
         for tbl in ("rt_latest_transactions", "rt_stage_metrics",
-                    "rt_gen_metrics", "rt_gold_snapshots"):
+                    "rt_gen_metrics"):
             self._execute("write", f"TRUNCATE TABLE {tbl}", (), fetch=False)
 
     # -- writes (generator telemetry) ---------------------------------------

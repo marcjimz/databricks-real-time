@@ -3,7 +3,8 @@
 -- Applied to the Lakebase instance's application database (not Unity Catalog).
 -- These tables back the live dashboard: the medallion pipeline upserts into
 -- them from foreachBatch, and the Dash app reads them at 1 Hz. Everything the
--- UI shows "live" comes from here; gold (in UC) is only for trend charts.
+-- UI shows comes from here — the serverless DLT medallion writes them via its
+-- Lakebase serving sink (there is no gold tier).
 --
 -- Path-keyed by source_path ('zerobus' | 'eventhub') so a single schema serves
 -- both ingestion front doors and the two paths can be compared side by side.
@@ -36,7 +37,7 @@ CREATE INDEX IF NOT EXISTS rt_latest_transactions_ts_lakebase_idx
 CREATE TABLE IF NOT EXISTS rt_stage_metrics (
   batch_ts     timestamptz DEFAULT now(),
   source_path  text,
-  pipeline     text,                 -- eh_ingest | bronze_to_silver | silver_to_gold
+  pipeline     text,                 -- eh_ingest | bronze_to_silver (DLT medallion)
   batch_id     bigint,
   rows_written int,
   batch_ms     int,
@@ -58,15 +59,9 @@ ALTER TABLE rt_stage_metrics ADD COLUMN IF NOT EXISTS silver_ms   int;
 ALTER TABLE rt_stage_metrics ADD COLUMN IF NOT EXISTS lakebase_ms int;
 ALTER TABLE rt_stage_metrics ADD COLUMN IF NOT EXISTS quarantined int;
 
--- Gold window snapshots mirrored from UC for the census/throughput trend view.
-CREATE TABLE IF NOT EXISTS rt_gold_snapshots (
-  window_start timestamptz,
-  source_path  text,
-  facility_id  text,
-  message_type text,
-  msg_count    int,
-  PRIMARY KEY (window_start, source_path, facility_id, message_type)
-);
+-- (rt_gold_snapshots removed: the gold tier was dropped in the DLT serverless
+-- migration — nothing consumed it. The dashboard reads rt_latest_transactions +
+-- rt_stage_metrics below, both fed by the DLT Lakebase serving sink.)
 
 -- Per-worker generator telemetry rolled up at 1 s: send rate, ack latency,
 -- throttle state. Drives the active-path panel and throughput "sent" line.

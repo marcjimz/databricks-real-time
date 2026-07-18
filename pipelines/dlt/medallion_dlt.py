@@ -183,7 +183,10 @@ from pipelines.dlt.lakebase_sink import write_serving  # noqa: E402
 
 @dlt.foreach_batch_sink(name="lakebase_serving")
 def _lakebase_serving(df, batch_id):
-    write_serving(spark, df, batch_id)
+    # Derive spark from the batch DF's own session — do NOT close over the
+    # module-level `spark`/globals (that makes the sink UDF non-serializable and
+    # the flow fails + won't restart, freezing the serving writes).
+    write_serving(df.sparkSession, df, batch_id)
 
 
 @dlt.append_flow(target="lakebase_serving")

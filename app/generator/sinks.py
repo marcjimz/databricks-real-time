@@ -1,8 +1,8 @@
 """Pluggable transport sinks — the swappable "front door" (spec sections 2, 3).
 
 The demo's thesis is *swap the front door, keep the house*: one HL7 factory feeds
-one of two transports, and everything downstream (bronze → silver → gold →
-Lakebase) is identical. This module is that swap point.
+one of two transports, and everything downstream (bronze → silver → Lakebase
+serving) is identical. This module is that swap point.
 
 A ``TransportSink`` takes factory records and delivers them to bronze:
 
