@@ -190,19 +190,30 @@ class LakebaseClient:
         )
 
     def stage_snapshot(self, source_path: str) -> dict | None:
-        """Newest bronze_to_silver metric row — the stage rail's hop badges (slot D)."""
+        """AVERAGED bronze_to_silver hop metrics over the last 60 s — the stage
+        rail's per-hop breakdown (slot D). Averaged (not the single latest batch)
+        so the bronze/silver/lakebase badges read as a stable typical breakdown
+        of the E2E trip rather than jumping with each batch. lag/batch use the
+        latest values (they're point-in-time backlog signals, not per-row hops).
+        """
         rows = self._query(
             """
-            SELECT batch_ts, batch_ms, lag_s, bronze_ms, silver_ms, lakebase_ms,
-                   quarantined, e2e_p50_ms, e2e_p95_ms, e2e_p99_ms
+            SELECT avg(bronze_ms)   AS bronze_ms,
+                   avg(silver_ms)   AS silver_ms,
+                   avg(lakebase_ms) AS lakebase_ms,
+                   avg(e2e_p50_ms)  AS e2e_p50_ms,
+                   avg(e2e_p95_ms)  AS e2e_p95_ms,
+                   avg(e2e_p99_ms)  AS e2e_p99_ms,
+                   avg(batch_ms)    AS batch_ms,
+                   max(lag_s)       AS lag_s,
+                   sum(quarantined) AS quarantined
             FROM rt_stage_metrics
             WHERE source_path = %s AND pipeline = 'bronze_to_silver'
-            ORDER BY batch_ts DESC
-            LIMIT 1
+              AND batch_ts > now() - interval '60 seconds'
             """,
             (source_path,),
         )
-        return rows[0] if rows else None
+        return rows[0] if rows and rows[0].get("bronze_ms") is not None else None
 
     def freshness_seconds(self, source_path: str) -> float | None:
         """Age (s) of the newest landed row for a path — the freshness probe (slot D)."""

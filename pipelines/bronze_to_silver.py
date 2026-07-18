@@ -57,10 +57,14 @@ CHECKPOINT_ROOT = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints/bronze_to_silver"
 TRIGGER_SECONDS = os.environ.get("TRIGGER_SECONDS")  # unset = back-to-back
 LATEST_UPSERT_LIMIT = 500
 RETENTION_EVERY = 100
-# Cap files per micro-batch so the first batch can't try to parse the whole
-# accumulated bronze table at once (which hangs). 500 small Zerobus files/batch
-# comfortably keeps pace with the live ingest rate while committing quickly.
-MAX_FILES_PER_TRIGGER = int(os.environ.get("MAX_FILES_PER_TRIGGER", "500"))
+# Files per micro-batch. Each batch has large fixed overhead (pandas-UDF init +
+# toPandas collect + Delta commit ~6 s regardless of size), so SMALL batches
+# starve throughput: 500 files ≈ 700 rows / 6 s ≈ only ~110 rows/s, barely
+# keeping pace and falling behind on any hiccup (lag → tens of seconds). Bigger
+# batches amortise that fixed cost — 4000 files/batch pushes effective
+# throughput well past the ingest rate so the stream stays caught up. Still
+# bounded so the first batch can't try to parse the whole table at once.
+MAX_FILES_PER_TRIGGER = int(os.environ.get("MAX_FILES_PER_TRIGGER", "4000"))
 
 # Driver-side caches so we don't open a Lakebase connection / mint an OAuth
 # token every micro-batch (which trips Lakebase's connection-rate limit).
