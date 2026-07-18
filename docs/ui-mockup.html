@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HL7 RTI demo — UI frame (live simulation)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0E141B; --panel:#161E27; --panel-2:#1C2632; --line:#243040;
+  --text:#E6ECF2; --muted:#8CA0B3; --faint:#5A6B7C;
+  --pa:#8B7FE8; --pa-dim:#3A3663; --pb:#2FB48C; --pb-dim:#1E4A3E;
+  --red:#E5484D; --amber:#E8A33D;
+  --mono:'IBM Plex Mono',ui-monospace,monospace; --sans:'Space Grotesk',system-ui,sans-serif;
+  --active:#8B7FE8; --active-dim:#3A3663;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--ink);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;padding:20px;min-height:100vh}
+.wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.mono{font-family:var(--mono)}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--active);outline-offset:2px}
+.eyebrow{display:flex;justify-content:space-between;align-items:baseline;padding:0 2px}
+.eyebrow h1{font-size:15px;font-weight:500;letter-spacing:.02em}
+.eyebrow span{font-size:12px;color:var(--faint);font-family:var(--mono)}
+.header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 16px}
+.run{display:flex;align-items:center;gap:8px;background:none;border:1px solid var(--line);border-radius:8px;padding:7px 14px;cursor:pointer}
+.run:hover{border-color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--pb)}
+.stopped .dot{background:var(--faint);animation:none}
+@media (prefers-reduced-motion:no-preference){.dot{animation:pulse 2s ease-in-out infinite}}
+@keyframes pulse{50%{opacity:.35}}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:none;border:0;padding:7px 16px;cursor:pointer;color:var(--muted)}
+.seg button[aria-pressed="true"]{color:var(--text);background:var(--panel-2);box-shadow:inset 0 -2px 0 var(--active)}
+.seg button:disabled{opacity:.5;cursor:wait}
+.chip{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.ctl{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.ctl output{font-family:var(--mono);color:var(--text);min-width:56px}
+input[type=range]{accent-color:var(--muted);width:120px}
+.burst{background:none;border:1px solid var(--line);border-radius:8px;padding:7px 14px;cursor:pointer}
+.burst:hover{border-color:var(--amber);color:var(--amber)}
+.burst.on{border-color:var(--amber);color:var(--amber)}
+.stepper{display:flex;align-items:center;gap:6px}
+.stepper button{width:26px;height:26px;border:1px solid var(--line);background:none;border-radius:6px;cursor:pointer;color:var(--muted)}
+.stepper button:hover{border-color:var(--muted)}
+.syn{margin-left:auto;font-size:11px;letter-spacing:.08em;color:var(--amber);border:1px solid var(--amber);border-radius:999px;padding:3px 10px}
+.cards{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+@media (max-width:900px){.cards{grid-template-columns:1fr}}
+.card{padding:18px 20px;position:relative}
+.card .name{display:flex;align-items:center;gap:9px;font-weight:500;font-size:15px}
+.swatch{width:10px;height:10px;border-radius:3px;background:var(--active)}
+.card .sub{font-size:12px;color:var(--muted);margin:3px 0 14px}
+.hero{display:flex;align-items:baseline;gap:10px}
+.hero strong{font-family:var(--mono);font-size:38px;font-weight:500;letter-spacing:-.02em}
+.hero em{font-style:normal;font-size:12px;color:var(--muted)}
+.meta{display:flex;gap:18px;margin-top:12px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.meta b{font-family:var(--mono);font-weight:400;color:var(--text)}
+#activeCard{border-color:var(--active-dim)}
+#activeCard.switching{opacity:.6}
+.prev{opacity:.55}
+.prev .hero strong{font-size:24px}
+.prev .empty{font-size:12px;color:var(--faint);margin-top:8px}
+.tag{position:absolute;top:16px;right:18px;font-size:11px;font-family:var(--mono);color:var(--faint)}
+.rail{display:flex;align-items:center;padding:14px 18px;flex-wrap:wrap;row-gap:10px}
+.hop{display:flex;flex-direction:column;gap:3px;padding:0 4px}
+.hop .k{font-size:11px;color:var(--faint)}
+.hop .v{font-family:var(--mono);font-size:13px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:4px 10px;min-width:110px;text-align:center}
+.tick{flex:0 0 24px;height:1px;background:var(--line);position:relative;top:9px}
+.tick::after{content:"";position:absolute;right:0;top:-2.5px;border:3px solid transparent;border-left-color:var(--faint)}
+.rail .end{margin-left:auto;display:flex;gap:16px;font-size:12px;color:var(--muted);align-items:center;flex-wrap:wrap}
+.rail .end b{font-family:var(--mono);font-weight:400;color:var(--text)}
+.warn{color:var(--red)!important}
+.caution{color:var(--amber)!important}
+#brokerhop,#brokertick{display:none}
+body[data-path=b] #brokerhop{display:flex}
+body[data-path=b] #brokertick{display:block}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:900px){.charts{grid-template-columns:1fr}}
+.chart{padding:14px 18px}
+.chart h2{font-size:12px;font-weight:500;color:var(--muted);letter-spacing:.04em;margin-bottom:8px;display:flex;justify-content:space-between}
+.chart h2 span{font-family:var(--mono);color:var(--faint);font-weight:400}
+.chart svg{width:100%;height:110px;display:block}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:5px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{font-size:11px;font-weight:400;color:var(--faint);text-align:left;padding:12px 18px 8px;letter-spacing:.05em}
+tbody td{padding:8px 18px;border-top:1px solid var(--line)}
+td.t,td.e{font-family:var(--mono)}
+td.e{text-align:right}
+th.e{text-align:right}
+tr.new{background:rgba(139,127,232,.08);transition:background 1.5s}
+body[data-path=b] tr.new{background:rgba(47,180,140,.08)}
+.pathchip{font-family:var(--mono);font-size:11px;border-radius:999px;padding:2px 9px}
+.pathchip.a{background:var(--pa-dim);color:#CFC9FF}
+.pathchip.b{background:var(--pb-dim);color:#9FE6CC}
+</style>
+</head>
+<body data-path="a">
+<div class="wrap">
+
+  <div class="eyebrow">
+    <h1>Real-time intelligence — HL7 feed</h1>
+    <span>rti_demo.hl7 · frame v4 · live simulation</span>
+  </div>
+
+  <div class="panel header">
+    <button class="run" id="runBtn" onclick="toggleRun()"><span class="dot"></span><span id="runLabel">Running</span></button>
+    <div class="seg" role="group" aria-label="Ingestion path">
+      <button id="btnA" aria-pressed="true" onclick="switchPath('a')">Zerobus</button>
+      <button id="btnB" aria-pressed="false" onclick="switchPath('b')">Event Hubs</button>
+    </div>
+    <span class="chip" id="profile">profile: patient_movement</span>
+    <div class="ctl"><label for="rate">Rate</label><input id="rate" type="range" min="10" max="2000" step="10" value="500" oninput="S.rate=+this.value;rateOut.value=this.value+'/s';annotate('rate '+this.value+'/s')"><output id="rateOut">500/s</output></div>
+    <div class="ctl">Streams <span class="stepper"><button aria-label="Fewer streams" onclick="streams(-1)">−</button><output class="mono" id="streamsOut" style="min-width:18px">4</output><button aria-label="More streams" onclick="streams(1)">+</button></span></div>
+    <button class="burst" id="burstBtn" onclick="burst()">Burst 10×</button>
+    <div class="ctl"><label for="mal">Malformed</label><input id="mal" type="range" min="0" max="20" value="0" style="width:70px" oninput="S.mal=+this.value;malOut.value=this.value+'%'"><output id="malOut" style="min-width:34px">0%</output></div>
+    <span class="syn">SYNTHETIC DATA</span>
+  </div>
+
+  <div class="cards">
+    <div class="panel card" id="activeCard">
+      <div class="name"><span class="swatch"></span><span id="activeName">Zerobus → medallion</span></div>
+      <p class="sub" id="activeSub">Direct write · no broker · app → bronze</p>
+      <div class="hero"><strong id="heroE2E">4.6 s</strong><em>e2e p95</em></div>
+      <div class="meta">
+        <span>landed <b id="mLanded">499/s</b></span>
+        <span><span id="mAckLabel">ack p99</span> <b id="mAck">22 ms</b></span>
+        <span>moving parts <b id="mParts">app → bronze</b></span>
+      </div>
+      <span class="tag" id="activeTag">live</span>
+    </div>
+    <div class="panel card prev" id="prevCard">
+      <div class="name"><span class="swatch" id="prevSwatch" style="background:var(--pb)"></span><span id="prevName">Event Hubs</span></div>
+      <p class="sub">Previous run</p>
+      <div id="prevBody" class="empty">Not yet run — switch paths to compare.</div>
+      <span class="tag">previous run</span>
+    </div>
+  </div>
+
+  <div class="panel rail" aria-label="Pipeline stage latency">
+    <div class="hop"><span class="k" id="hopGenK">gen</span><span class="v" id="hopAck">ack 22 ms</span></div>
+    <span class="tick" id="brokertick"></span>
+    <div class="hop" id="brokerhop"><span class="k">event hubs</span><span class="v" id="hopBroker">broker 480 ms</span></div>
+    <span class="tick"></span>
+    <div class="hop"><span class="k">delta</span><span class="v" id="hopBronze">bronze 3.1 s</span></div>
+    <span class="tick"></span>
+    <div class="hop"><span class="k">parse + validate</span><span class="v" id="hopSilver">silver 640 ms</span></div>
+    <span class="tick"></span>
+    <div class="hop"><span class="k">jdbc</span><span class="v" id="hopLake">lakebase 210 ms</span></div>
+    <div class="end">
+      <span>batch <b id="fBatch">820 ms</b></span>
+      <span>lag <b id="fLag">0.4 s</b></span>
+      <span>workers <b id="fWorkers">3</b></span>
+      <span>quarantine <b id="fQuar">0</b></span>
+      <span>freshness <b id="fFresh">0.8 s</b></span>
+    </div>
+  </div>
+
+  <div class="charts">
+    <div class="panel chart">
+      <h2>Throughput — events/s <span>60 s window</span></h2>
+      <svg viewBox="0 0 560 110" preserveAspectRatio="none" role="img" aria-label="Live throughput, sent versus landed">
+        <line x1="0" y1="109" x2="560" y2="109" stroke="#243040"/>
+        <g id="thrAnn"></g>
+        <polygon id="thrArea" points="" fill="rgba(139,127,232,.14)"/>
+        <polyline id="thrLanded" points="" fill="none" stroke="var(--active)" stroke-width="1.5"/>
+        <polyline id="thrSent" points="" fill="none" stroke="#8CA0B3" stroke-width="1" stroke-dasharray="3 3"/>
+      </svg>
+      <div class="legend"><span><i style="background:#8CA0B3"></i>sent</span><span><i id="legLanded" style="background:var(--pa)"></i>landed</span><span><i style="background:#E8A33D"></i>annotation</span></div>
+    </div>
+    <div class="panel chart">
+      <h2>Latency — e2e percentiles <span>60 s window</span></h2>
+      <svg viewBox="0 0 560 110" preserveAspectRatio="none" role="img" aria-label="Live end to end latency percentiles">
+        <line x1="0" y1="109" x2="560" y2="109" stroke="#243040"/>
+        <g id="latAnn"></g>
+        <polyline id="latP95" points="" fill="none" stroke="var(--active)" stroke-width="1.5"/>
+        <polyline id="latP50" points="" fill="none" stroke="var(--active)" stroke-width="1" opacity=".45"/>
+      </svg>
+      <div class="legend"><span><i id="legP" style="background:var(--pa)"></i>p95 / p50</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead><tr><th>Time</th><th>Facility</th><th>Type</th><th>Summary</th><th>Path</th><th class="e">E2E</th></tr></thead>
+      <tbody id="tail"></tbody>
+    </table>
+  </div>
+
+</div>
+<script>
+var S = {path:'a', running:true, rate:500, streams:4, mal:0, burstUntil:0, switching:false,
+         quar:0, thr:[], sent:[], p95s:[], p50s:[], ann:[], t:0,
+         prev:{a:null, b:null}};
+var P = {
+  a:{name:'Zerobus → medallion', sub:'Direct write · no broker · app → bronze', parts:'app → bronze',
+     ackLabel:'ack p99', ackBase:22, e2eBase:4600, color:'var(--pa)', profile:'patient_movement',
+     facilities:['FAC-01','FAC-02','FAC-03'],
+     rows:[['ADT^A01','Admit · unit 4W · bed {n}'],['ADT^A03','Discharge · unit 2E'],
+           ['ADT^A08','Update · attending changed'],['ADT^A01','Admit · unit 5N · bed {n}']]},
+  b:{name:'Event Hubs → medallion', sub:'Broker + ingest stream · app → broker → bronze', parts:'app → broker → ingest → bronze',
+     ackLabel:'delivery p99', ackBase:9, e2eBase:5800, color:'var(--pb)', profile:'lab_results',
+     facilities:['LAB-01','LAB-02'],
+     rows:[['ORU^R01','K {k} mmol/L · final'],['ORU^R01','Hgb {h} g/dL · final'],
+           ['ORM^O01','Order · CBC panel'],['ORU^R01','Na {na} mmol/L · final']]}
+};
+function $(id){return document.getElementById(id)}
+function j(base,pct){return base*(1+(Math.random()-.5)*pct)}
+function fmtMs(ms){return ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s'}
+
+function applyPathTheme(p){
+  document.body.dataset.path=p;
+  document.documentElement.style.setProperty('--active', p==='a'?'#8B7FE8':'#2FB48C');
+  document.documentElement.style.setProperty('--active-dim', p==='a'?'#3A3663':'#1E4A3E');
+  $('btnA').setAttribute('aria-pressed', p==='a');
+  $('btnB').setAttribute('aria-pressed', p==='b');
+  $('profile').textContent='profile: '+P[p].profile;
+  $('activeName').textContent=P[p].name;
+  $('activeSub').textContent=P[p].sub;
+  $('mParts').textContent=P[p].parts;
+  $('mAckLabel').textContent=P[p].ackLabel;
+  var other=p==='a'?'b':'a';
+  $('prevName').textContent=P[other].name.split(' →')[0];
+  $('prevSwatch').style.background=P[other].color;
+  var pr=S.prev[other];
+  $('prevBody').className=pr?'':'empty';
+  $('prevBody').innerHTML=pr
+    ? '<div class="hero"><strong>'+(pr.e2e/1000).toFixed(1)+' s</strong><em>p95, last run</em></div>'+
+      '<div class="meta"><span>peak <b>'+pr.peak.toLocaleString()+'/s</b></span><span>quarantined <b>'+pr.quar+'</b></span><span>ended <b>'+pr.ended+'</b></span></div>'
+    : 'Not yet run — switch paths to compare.';
+}
+function switchPath(p){
+  if(p===S.path||S.switching)return;
+  S.switching=true;
+  $('btnA').disabled=$('btnB').disabled=true;
+  $('activeCard').classList.add('switching');
+  $('activeTag').textContent='switching…';
+  var old=S.path;
+  S.prev[old]={e2e:P[old].e2eBase, peak:S.rate*(Date.now()<S.burstUntil?10:1), quar:S.quar,
+               ended:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})};
+  setTimeout(function(){
+    S.path=p; S.quar=0; S.switching=false;
+    applyPathTheme(p);
+    $('btnA').disabled=$('btnB').disabled=false;
+    $('activeCard').classList.remove('switching');
+    $('activeTag').textContent='live';
+    annotate('path → '+(p==='a'?'zerobus':'event hubs'));
+  },1500);
+}
+function toggleRun(){
+  S.running=!S.running;
+  $('runLabel').textContent=S.running?'Running':'Stopped';
+  $('runBtn').classList.toggle('stopped',!S.running);
+}
+function streams(d){
+  S.streams=Math.min(16,Math.max(1,S.streams+d));
+  $('streamsOut').textContent=S.streams;
+  annotate('streams '+S.streams);
+}
+function burst(){
+  S.burstUntil=Date.now()+15000;
+  $('burstBtn').classList.add('on');
+  annotate('burst 10×');
+  setTimeout(function(){$('burstBtn').classList.remove('on')},15000);
+}
+function annotate(label){S.ann.push({t:S.t,label:label})}
+
+function pts(arr,max){
+  var n=60,out=[];
+  for(var i=0;i<arr.length;i++){out.push((i*(560/(n-1))).toFixed(1)+','+(105-Math.min(1,arr[i]/max)*95).toFixed(1))}
+  return out.join(' ');
+}
+function drawAnn(gid,max){
+  var g=$(gid);g.innerHTML='';
+  S.ann=S.ann.filter(function(a){return S.t-a.t<60});
+  S.ann.forEach(function(a){
+    var x=((59-(S.t-a.t))*(560/59)).toFixed(1);
+    if(x<0)return;
+    g.innerHTML+='<line x1="'+x+'" y1="8" x2="'+x+'" y2="109" stroke="#E8A33D" stroke-width="1" stroke-dasharray="2 3"/>'+
+      '<text x="'+(+x+4)+'" y="14" fill="#E8A33D" font-size="9" font-family="IBM Plex Mono">'+a.label+'</text>';
+  });
+}
+var tailN=0;
+function addTailRow(e2ems){
+  var p=S.path, cfg=P[p], tb=$('tail');
+  var row=cfg.rows[Math.floor(Math.random()*cfg.rows.length)];
+  var summary=row[1].replace('{n}',1+Math.floor(Math.random()*30))
+    .replace('{k}',(3.5+Math.random()*1.5).toFixed(1))
+    .replace('{h}',(11+Math.random()*4).toFixed(1))
+    .replace('{na}',(135+Math.random()*8).toFixed(0));
+  var tr=document.createElement('tr');
+  tr.className='new';
+  tr.innerHTML='<td class="t">'+new Date().toLocaleTimeString('en-GB')+'</td>'+
+    '<td>'+cfg.facilities[Math.floor(Math.random()*cfg.facilities.length)]+'</td>'+
+    '<td class="t">'+row[0]+'</td><td>'+summary+'</td>'+
+    '<td><span class="pathchip '+p+'">'+(p==='a'?'zerobus':'eventhub')+'</span></td>'+
+    '<td class="e">'+fmtMs(e2ems)+'</td>';
+  tb.insertBefore(tr,tb.firstChild);
+  setTimeout(function(){tr.classList.remove('new')},2000);
+  while(tb.children.length>8)tb.removeChild(tb.lastChild);
+}
+
+function tick(){
+  S.t++;
+  var cfg=P[S.path];
+  var bursting=Date.now()<S.burstUntil;
+  var run=S.running&&!S.switching;
+  var target=run?S.rate*(bursting?10:1):0;
+  var landed=run?target*j(.985,.02):0;
+  var strain=bursting?1.3:1;
+  var e2e=run?j(cfg.e2eBase*strain,.12):cfg.e2eBase;
+  var p50=e2e*0.62;
+  S.sent.push(target);S.thr.push(landed);S.p95s.push(e2e);S.p50s.push(p50);
+  [S.sent,S.thr,S.p95s,S.p50s].forEach(function(a){if(a.length>60)a.shift()});
+  var maxT=Math.max(600,Math.max.apply(null,S.sent)*1.15);
+  $('thrSent').setAttribute('points',pts(S.sent,maxT));
+  $('thrLanded').setAttribute('points',pts(S.thr,maxT));
+  $('thrArea').setAttribute('points',pts(S.thr,maxT)+' 560,109 0,109');
+  var maxL=Math.max(8000,Math.max.apply(null,S.p95s)*1.2);
+  $('latP95').setAttribute('points',pts(S.p95s,maxL));
+  $('latP50').setAttribute('points',pts(S.p50s,maxL));
+  drawAnn('thrAnn',maxT);drawAnn('latAnn',maxL);
+  if(run){
+    $('heroE2E').textContent=(e2e/1000).toFixed(1)+' s';
+    $('mLanded').textContent=Math.round(landed).toLocaleString()+'/s';
+    $('mAck').textContent=Math.round(j(cfg.ackBase,.3))+' ms';
+    $('hopAck').textContent=(S.path==='a'?'ack ':'delivery ')+Math.round(j(cfg.ackBase,.3))+' ms';
+    $('hopBroker').textContent='broker '+Math.round(j(480,.2))+' ms';
+    $('hopBronze').textContent='bronze '+fmtMs(j(3100*strain,.1));
+    $('hopSilver').textContent='silver '+fmtMs(j(640*strain,.15));
+    $('hopLake').textContent='lakebase '+fmtMs(j(210,.2));
+    $('fBatch').textContent=fmtMs(j(820*strain,.15));
+    var lag=bursting?j(4.5,.3):j(.4,.5);
+    $('fLag').textContent=lag.toFixed(1)+' s';
+    $('fLag').className=lag>30?'warn':(lag>5?'caution':'');
+    var fresh=j(.8,.5);
+    $('fFresh').textContent=fresh.toFixed(1)+' s';
+    $('fFresh').className=fresh>15?'warn':(fresh>5?'caution':'');
+    if(S.mal>0&&Math.random()<S.mal/10)S.quar++;
+    $('fQuar').textContent=S.quar;
+    $('fQuar').className=S.quar>0?'warn':'';
+    $('fWorkers').textContent=bursting?6:3;
+    if(Math.random()<.7)addTailRow(j(e2e,.15));
+  }
+}
+applyPathTheme('a');
+for(var i=0;i<60;i++)tick();
+S.ann=[];
+setInterval(tick,1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+# Medallion streaming job — the billable continuous compute for the demo.
+#
+# One job runs both shared pipelines as parallel, never-ending tasks on a SINGLE
+# shared classic autoscaling cluster (2–8 workers), so the two hops share one
+# compute footprint rather than paying for a cluster each:
+#   - bronze_to_silver : parse + validate + quarantine + Lakebase live tail
+#   - silver_to_gold   : 10 s windowed aggregates → gold + rt_gold_snapshots
+# (Path B's eh_ingest task joins here in Phase 3, on the same shared cluster.)
+#
+# Deployed PAUSED on purpose: `bundle deploy` provisions the definition but the
+# continuous trigger stays paused so no cluster spins up (and nothing bills)
+# until someone explicitly unpauses the job. The pipelines import the repo as a
+# package, so the bundle root is placed on PYTHONPATH via spark_env_vars.
+#
+# The job runs as the deploying owner (no run_as), who already owns the Lakebase
+# project — so it mints its own OAuth database credential per connection and needs
+# no extra Postgres grant. LAKEBASE_USER is left empty to default to the run-as
+# identity; ENDPOINT_NAME drives the token mint (see pipelines/bronze_to_silver.py).
+
+resources:
+  jobs:
+    hl7_medallion:
+      name: hl7-rti-medallion
+      tags:
+        project: hl7-rti-demo
+        managed-by: databricks-asset-bundle
+
+      job_clusters:
+        - job_cluster_key: shared_medallion
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: i3.xlarge
+            data_security_mode: SINGLE_USER
+            # Elastic across load: the streaming backlog drives the autoscaler
+            # up under pressure and back down when idle. Wide headroom (to 30
+            # workers) so a burst (10×) or a catch-up scale-out is never capped —
+            # idle cost stays at min_workers since it scales back down.
+            autoscale:
+              min_workers: 2
+              max_workers: 30
+            spark_conf:
+              # AQE sizes shuffle partitions to the actual per-batch data rather
+              # than a fixed low count (the old shuffle.partitions=8 throttled
+              # parallelism and masked load from the autoscaler).
+              spark.sql.adaptive.enabled: "true"
+              spark.sql.adaptive.coalescePartitions.enabled: "true"
+            spark_env_vars:
+              # NOTE: do NOT set PYTHONPATH here — as a Spark env var it
+              # propagates to the executor Python workers and breaks their
+              # launch (pandas-UDF workers fail with "No module named
+              # 'pyspark'"). Ship the bundle root under a neutral name and add
+              # it to sys.path in code (driver bootstrap + inside the parse UDF).
+              BUNDLE_ROOT: ${workspace.file_path}
+              HL7_CATALOG: ${var.catalog}
+              HL7_SCHEMA: ${var.schema}
+              LAKEBASE_HOST: ${var.lakebase_host}
+              LAKEBASE_PORT: "5432"
+              LAKEBASE_DATABASE: ${var.lakebase_database}
+              LAKEBASE_USER: ${var.lakebase_user}
+              # No static password: the pipeline mints a short-lived OAuth token
+              # per connection for this endpoint as the job's run-as identity
+              # (the Lakebase project owner). See pipelines/bronze_to_silver.py.
+              ENDPOINT_NAME: ${var.lakebase_endpoint_name}
+            custom_tags:
+              project: hl7-rti-demo
+
+      tasks:
+        - task_key: bronze_to_silver
+          job_cluster_key: shared_medallion
+          spark_python_task:
+            python_file: ${workspace.file_path}/pipelines/bronze_to_silver.py
+          libraries:
+            - pypi:
+                package: psycopg[binary]==3.2.3
+            - pypi:
+                package: databricks-sdk==0.120.0
+
+        - task_key: silver_to_gold
+          job_cluster_key: shared_medallion
+          spark_python_task:
+            python_file: ${workspace.file_path}/pipelines/silver_to_gold.py
+          libraries:
+            - pypi:
+                package: psycopg[binary]==3.2.3
+            - pypi:
+                package: databricks-sdk==0.120.0
+
+      # Continuous = back-to-back micro-batches, always one active run. Paused on
+      # deploy so provisioning never starts billable compute implicitly.
+      continuous:
+        pause_status: PAUSED
+
+      queue:
+        enabled: true

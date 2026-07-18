@@ -1,0 +1,25 @@
+# Spec / planning artifacts — not part of the repo
+spec/
+
+# Session memory
+MEMORY.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Databricks
+.databricks/
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

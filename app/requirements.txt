@@ -1,0 +1,8 @@
+# Databricks App runtime dependencies (pure-Python, all prebuilt wheels)
+dash==2.17.1
+plotly==5.24.1
+httpx[http2]==0.27.2
+psycopg[binary]==3.2.3
+confluent-kafka==2.6.0
+databricks-sdk==0.120.0
+python-dateutil==2.9.0.post0

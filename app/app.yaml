@@ -1,0 +1,29 @@
+# Databricks Apps manifest for the HL7 RTI dashboard.
+# The app runs the Dash server (UI + in-process event generator). The generator
+# writes bronze via Zerobus REST using the app service principal's OAuth creds,
+# which Databricks Apps inject as DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET.
+command:
+  - gunicorn
+  - app:server
+  - --bind
+  - 0.0.0.0:8000
+  - --workers
+  - "1"
+  - --threads
+  - "8"
+  - --timeout
+  - "120"
+
+env:
+  - name: INGEST_PATH
+    value: zerobus
+  - name: HL7_CATALOG
+    value: real_time_mode_demo_catalog
+  - name: HL7_SCHEMA
+    value: rti_demo
+  # Autoscaling Lakebase endpoint used to mint the short-lived OAuth password.
+  # PGHOST/PGUSER/PGPORT/PGDATABASE are auto-injected by the attached `database`
+  # app resource (never PGPASSWORD — the app mints it per connection).
+  - name: ENDPOINT_NAME
+    value: projects/rti-demo/branches/production/endpoints/primary
+  # Event Hubs values (EVENTHUB_*) are injected as app secrets in Phase 3.

@@ -1,0 +1,43 @@
+# Databricks App — the single-screen HL7 RTI dashboard + in-process generator.
+#
+# The app serves the Dash UI (gunicorn manifest in app/app.yaml) and runs the
+# asyncio event generator in-process, writing bronze via Zerobus REST with the
+# app service principal's injected OAuth creds. It reads the Lakebase serving
+# tables for the live tail, stage rail, and charts.
+#
+# `source_code_path` points at the synced app/ directory; the runtime command,
+# workers, and base env live in app/app.yaml. Lakebase connection values are
+# layered in as app env / secrets once the SP has a Postgres role.
+
+resources:
+  apps:
+    hl7_rti_dashboard:
+      name: hl7-rti-dashboard
+      description: HL7 Real-Time Intelligence dashboard — swap the front door, keep the house.
+      source_code_path: ${workspace.file_path}/app
+
+      # Attaching the autoscaling Lakebase project as a `postgres` app resource is
+      # what makes the runtime auto-inject PGHOST/PGUSER/PGPORT/PGDATABASE for the
+      # app SP (PGPASSWORD is never injected — the app mints an OAuth token per
+      # connect, see app/data/lakebase.py). The app SP still needs a Postgres role
+      # granted offline before it can actually connect (see the plan's offline steps).
+      #
+      # NOTE: the autoscaling tier is a `postgres_projects` project, NOT a legacy
+      # provisioned `database_instances` instance — so we use the `postgres` app
+      # resource (branch + database), not `database` (instance_name). The older
+      # `database` resource resolves instance_name against the provisioned instance
+      # API, which does not see our project ("Database instance rti-demo does not
+      # exist"). The project is encoded in the branch path.
+      # The `database` field is a fully-qualified resource path
+      # (projects/{id}/branches/{branch}/databases/{database_id}), NOT a bare
+      # name — the bare form fails deploy with "Field 'name' expects
+      # 'projects/{project_id}/branches/{branch_id}/databases/{database_id}'".
+      # The trailing segment is the control-plane database_id (var
+      # lakebase_database_id), which Lakebase assigns on database creation and is
+      # distinct from the raw Postgres database name (var lakebase_database).
+      resources:
+        - name: lakebase
+          postgres:
+            branch: projects/${var.lakebase_project_id}/branches/production
+            database: projects/${var.lakebase_project_id}/branches/production/databases/${var.lakebase_database_id}
+            permission: CAN_CONNECT_AND_CREATE

@@ -1,0 +1,87 @@
+# Databricks Asset Bundle for the HL7 Real-Time Intelligence demo.
+#
+# What this bundle provisions (Infrastructure-as-Code):
+#   - An **autoscaling-tier** Lakebase Postgres Project (the low-latency serving
+#     store the Dash app reads for the live tail + stage metrics). Creating the
+#     project auto-creates its `production` branch and `primary` read-write
+#     endpoint; the endpoint's compute bounds come from
+#     `default_endpoint_settings` (see resources/lakebase.yml).
+#
+# Autoscaling tier == `postgres_projects` (CLI: `databricks postgres`), NOT the
+# legacy provisioned-tier `database_instances` (CLI: `databricks database`).
+# Requires Databricks CLI v0.285.0+ (this repo validated on v0.297.2).
+#
+# The workspace, Unity Catalog catalog, and demo service principal are
+# PRE-EXISTING prerequisites (created in Phase 0) — the bundle does not manage
+# them. Job + App resources are layered in during Phase 2.
+#
+# Usage:
+#   databricks bundle validate -t dev            # non-destructive lint
+#   databricks bundle deploy   -t dev            # provisions billable infra
+#   databricks bundle destroy  -t dev            # tears the project back down
+
+bundle:
+  name: hl7-rti-demo
+
+variables:
+  catalog:
+    description: Pre-existing Unity Catalog catalog that owns the rti_demo schema.
+    default: real_time_mode_demo_catalog
+  schema:
+    description: UC schema holding the medallion tables.
+    default: rti_demo
+  lakebase_project_id:
+    description: >-
+      Stable id for the autoscaling Lakebase Project. Must be 3-63 chars, start
+      with a lowercase letter, and contain only lowercase letters, numbers, and
+      hyphens. The app connects to this project's primary endpoint by name, so
+      keep it deterministic (do not let dev-mode name-mangling rewrite it).
+    default: rti-demo
+  lakebase_min_cu:
+    description: Autoscaling floor (Compute Units). 0.5 enables scale-to-zero idle.
+    default: "0.5"
+  lakebase_max_cu:
+    description: Autoscaling ceiling (Compute Units) for the primary endpoint.
+    default: "2.0"
+  lakebase_host:
+    description: >-
+      Primary-endpoint host the medallion job connects to. Resolved after the
+      project is provisioned (databricks postgres list-endpoints ...). Empty until
+      the Lakebase project is (re)provisioned in the target workspace.
+    default: ep-steep-mountain-d2c3ahvt.database.us-east-1.cloud.databricks.com
+  lakebase_database:
+    description: Postgres database (created inside the project) holding the serving tables.
+    default: rti_demo
+  lakebase_database_id:
+    description: >-
+      Control-plane database_id for the app `postgres` resource. Lakebase assigns
+      this (e.g. db-a19q-...) when a Postgres database is created; it is NOT the
+      raw database name. Find it via
+      GET /api/2.0/postgres/projects/<id>/branches/production/databases and match
+      status.postgres_database == lakebase_database. Stable while the DB exists.
+    default: db-a19q-unetbmp96x
+  lakebase_endpoint_name:
+    description: >-
+      Autoscaling endpoint path the app + job mint OAuth database credentials
+      against (databricks postgres generate-database-credential <this>).
+    default: projects/rti-demo/branches/production/endpoints/primary
+  lakebase_user:
+    description: >-
+      Postgres role the medallion job authenticates as. The job runs as the
+      deploying owner (no run_as), and Lakebase OAuth requires the Postgres
+      `user` to match the identity the token was minted for — so this is the
+      owner's workspace identity (their email), which is the project-owner role.
+    default: marcin.jimenez@databricks.com
+
+include:
+  - resources/*.yml
+
+# A single explicit target. We intentionally do NOT set `mode: development`:
+# dev-mode prepends `[dev <user>]` / `dev_<user>_` prefixes to resource names,
+# which would rewrite the Lakebase `project_id` and break the fixed host the
+# app is wired to connect to.
+targets:
+  dev:
+    default: true
+    workspace:
+      host: https://fevm-real-time-mode-demo.cloud.databricks.com

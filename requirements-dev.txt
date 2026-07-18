@@ -1,0 +1,5 @@
+# Local development + test dependencies.
+# Installs the app runtime plus test tooling. Pipelines run on Databricks
+# (PySpark provided by the cluster runtime), so pyspark is not pinned here.
+-r app/requirements.txt
+pytest==8.3.3

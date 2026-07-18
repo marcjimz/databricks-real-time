@@ -1,0 +1,32 @@
+# Autoscaling-tier Lakebase Postgres Project — the demo's serving store.
+#
+# Declaring a `postgres_projects` resource creates the Project AND, implicitly,
+# its `production` branch plus a `primary` read-write endpoint. The primary
+# endpoint inherits its compute bounds from `default_endpoint_settings` below,
+# so we do NOT declare a separate `postgres_endpoints` resource for it (that
+# would collide with the auto-created primary).
+#
+# After `bundle deploy`, wire the app/job to the project:
+#   HOST=$(databricks postgres list-endpoints \
+#     projects/rti-demo/branches/production -p <profile> -o json \
+#     | jq -r '.[0].status.hosts.host')
+#   TOKEN=$(databricks postgres generate-database-credential \
+#     projects/rti-demo/branches/production/endpoints/primary -p <profile> \
+#     -o json | jq -r '.token')
+# then apply sql/02_lakebase.sql against dbname=rti_demo and set LAKEBASE_* env.
+
+resources:
+  postgres_projects:
+    rti_demo:
+      project_id: ${var.lakebase_project_id}
+      display_name: HL7 RTI Demo (autoscaling Lakebase serving store)
+      default_endpoint_settings:
+        # Scale-to-zero floor keeps idle cost near nothing between demo runs;
+        # the ceiling caps burst compute for the upsert + tail read workload.
+        autoscaling_limit_min_cu: ${var.lakebase_min_cu}
+        autoscaling_limit_max_cu: ${var.lakebase_max_cu}
+      custom_tags:
+        - key: project
+          value: hl7-rti-demo
+        - key: managed-by
+          value: databricks-asset-bundle
