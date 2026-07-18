@@ -36,67 +36,16 @@ TBLPROPERTIES (
 );
 
 -- ---------------------------------------------------------------------------
--- Silver: parsed + validated clean records
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS {catalog}.{schema}.silver_hl7_parsed (
-  event_id      STRING NOT NULL,
-  source_path   STRING NOT NULL,
-  facility_id   STRING,
-  message_type  STRING,
-  patient_mrn   STRING,
-  unit          STRING,
-  summary       STRING    COMMENT 'human-readable one-line clinical summary',
-  ts_generated  TIMESTAMP,
-  ts_transport  TIMESTAMP,
-  ts_bronze     TIMESTAMP,
-  ts_silver     TIMESTAMP COMMENT 'parse/validate commit time'
-)
-USING DELTA;
-
--- ---------------------------------------------------------------------------
--- Quarantine: records that failed parse/validate (queryable, not dropped)
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS {catalog}.{schema}.silver_hl7_quarantine (
-  event_id      STRING,
-  source_path   STRING,
-  error_code    STRING COMMENT 'TRUNCATED_SEGMENT | BAD_SEPARATOR | BAD_TIMESTAMP | PARSE_ERROR',
-  error_detail  STRING,
-  hl7_raw       STRING,
-  ts_generated  TIMESTAMP,
-  ts_transport  TIMESTAMP,          -- Path B Kafka record ts; NULL on Path A (matches silver_hl7_parsed)
-  ts_bronze     TIMESTAMP,
-  ts_silver     TIMESTAMP
-)
-USING DELTA;
-
--- ---------------------------------------------------------------------------
--- Gold: 10s tumbling-window aggregates, keyed by source_path (30s watermark)
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS {catalog}.{schema}.gold_throughput_10s (
-  window_start TIMESTAMP NOT NULL,
-  source_path  STRING    NOT NULL,
-  facility_id  STRING,
-  message_type STRING,
-  msg_count    BIGINT
-)
-USING DELTA;
-
-CREATE TABLE IF NOT EXISTS {catalog}.{schema}.gold_latency_10s (
-  window_start TIMESTAMP NOT NULL,
-  source_path  STRING    NOT NULL,
-  e2e_p50_ms   INT,
-  e2e_p95_ms   INT,
-  e2e_p99_ms   INT,
-  msg_count    BIGINT
-)
-USING DELTA;
-
-CREATE TABLE IF NOT EXISTS {catalog}.{schema}.gold_census_delta_10s (
-  window_start TIMESTAMP NOT NULL,
-  source_path  STRING    NOT NULL,
-  facility_id  STRING,
-  admits       BIGINT,
-  discharges   BIGINT,
-  net_census   BIGINT
-)
-USING DELTA;
+-- Silver + Gold: intentionally NOT declared here.
+--
+-- The medallion is a serverless DLT (Lakeflow) pipeline (resources/dlt_pipeline.yml,
+-- pipelines/dlt/medallion_dlt.py). DLT OWNS and materializes its output tables —
+-- `silver_hl7_parsed` and `silver_hl7_quarantine` are DLT-managed streaming
+-- tables. Declaring them here as plain MANAGED Delta tables would collide with
+-- DLT on deploy ("Could not materialize … a MANAGED table already exists"), so
+-- their DDL is removed. This file now provisions only the shared bronze landing
+-- table (above, written by Zerobus) + the checkpoints volume.
+--
+-- The old gold_* aggregates are dropped entirely: nothing consumed them (the
+-- dashboard reads the Lakebase rt_* serving tables), so the DLT migration is
+-- bronze → silver → Lakebase serving only — no gold tier.

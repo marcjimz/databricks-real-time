@@ -1,0 +1,57 @@
+# Serverless Lakeflow Declarative Pipeline (DLT) — the HL7 medallion.
+#
+# Replaces the classic-compute medallion job (resources/jobs.yml). Serverless +
+# enhanced autoscaling fixes the "classic autoscale ignores streaming backlog"
+# problem: the pipeline scales on streaming task-queue/slot pressure so
+# throughput tracks the ingest rate and the backlog clears.
+#
+# - serverless: true          → serverless compute (enhanced autoscaling always on)
+# - photon: true              → vectorised engine
+# - continuous: true          → always-on streaming (back-to-back micro-batches)
+# - channel: CURRENT          → serverless has no DBR knob; channel picks runtime
+# - configuration:            → serverless has no spark_env_vars; config passed here
+# - environment.dependencies  → pin databricks-sdk (for .postgres OAuth) + psycopg
+#
+# Performance-Optimized mode (low-latency, warm start) is the default for
+# serverless pipelines and is what this latency demo wants.
+
+resources:
+  pipelines:
+    hl7_medallion_dlt:
+      name: hl7-rti-medallion-dlt
+      serverless: true
+      photon: true
+      continuous: true
+      channel: CURRENT
+      development: true
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      tags:
+        project: hl7-rti-demo
+        managed-by: databricks-asset-bundle
+
+      # The entry module + its sibling deps. DLT loads each listed file; the
+      # parser and sink modules are imported by medallion_dlt via
+      # `pipelines.lib.*` / `pipelines.dlt.*`, resolved by the sys.path shim at
+      # the top of medallion_dlt (adds the bundle files root).
+      libraries:
+        - file:
+            path: ../pipelines/dlt/medallion_dlt.py
+
+      # Serverless pipelines have no spark_env_vars — pass runtime config here.
+      # Read in code via spark.conf.get("hl7.<key>").
+      configuration:
+        hl7.catalog: ${var.catalog}
+        hl7.schema: ${var.schema}
+        hl7.lakebase_host: ${var.lakebase_host}
+        hl7.lakebase_port: "5432"
+        hl7.lakebase_database: ${var.lakebase_database}
+        hl7.lakebase_user: ${var.lakebase_user}
+        hl7.endpoint_name: ${var.lakebase_endpoint_name}
+
+      # Pin the SDK (for .postgres OAuth minting) + psycopg into the serverless
+      # environment — do NOT rely on the base image's bundled SDK version.
+      environment:
+        dependencies:
+          - databricks-sdk==0.120.0
+          - psycopg[binary]==3.2.3
