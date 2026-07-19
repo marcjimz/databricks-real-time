@@ -21,6 +21,17 @@ env:
     value: real_time_mode_demo_catalog
   - name: HL7_SCHEMA
     value: rti_demo
+  # Pin workspace identity for THIS workspace (fevm-real-time-mode-demo, us-east-1).
+  # The Zerobus Direct Write endpoint is derived from workspace_id + region
+  # (https://{workspace_id}.zerobus.{region}.cloud.databricks.com), so these must
+  # be correct or sends fail. Do NOT rely on config.py defaults (they point at the
+  # old workspace) or on the platform-injected bare DATABRICKS_HOST.
+  - name: DATABRICKS_HOST
+    value: https://fevm-real-time-mode-demo.cloud.databricks.com
+  - name: DATABRICKS_WORKSPACE_ID
+    value: "7474653348487172"
+  - name: CLOUD_REGION
+    value: us-east-1
   # Autoscaling Lakebase endpoint used to mint the short-lived OAuth password.
   # PGHOST/PGUSER/PGPORT/PGDATABASE are auto-injected by the attached `database`
   # app resource (never PGPASSWORD — the app mints it per connection).

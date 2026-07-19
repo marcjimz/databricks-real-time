@@ -138,7 +138,13 @@ def _parsed_stream():
 @dlt.table(
     name="silver_hl7_parsed",
     comment="Parsed + validated HL7 records (valid only). DLT-managed streaming table.",
-    table_properties={"delta.enableDeletionVectors": "true"},
+    table_properties={
+        "delta.enableDeletionVectors": "true",
+        # 1 s micro-batch cadence for this flow (overrides DLT's default). Keeps
+        # the bronze→silver hop near real-time; the pipeline-wide default in
+        # resources/dlt_pipeline.yml covers the append_flow sink the same way.
+        "pipelines.trigger.interval": "1 second",
+    },
 )
 def silver_hl7_parsed():
     return (

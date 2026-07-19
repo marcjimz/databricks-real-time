@@ -48,6 +48,11 @@ resources:
         hl7.lakebase_database: ${var.lakebase_database}
         hl7.lakebase_user: ${var.lakebase_user}
         hl7.endpoint_name: ${var.lakebase_endpoint_name}
+        # Drive every streaming flow (bronze→silver AND the Lakebase append_flow
+        # sink) at a 1 s micro-batch cadence instead of DLT's default. This is the
+        # lever that shrinks the silver + serving hops toward real-time — the ~4 s
+        # serving gap was the un-tuned default trigger interval, not JDBC time.
+        pipelines.trigger.interval: "1 second"
 
       # Pin the SDK (for .postgres OAuth minting) + psycopg into the serverless
       # environment — do NOT rely on the base image's bundled SDK version.

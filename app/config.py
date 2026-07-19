@@ -49,12 +49,32 @@ def _env_int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+def _normalize_url(url: str) -> str:
+    """Ensure a URL carries an https:// scheme and no trailing slash.
+
+    Databricks Apps inject DATABRICKS_HOST as a bare hostname (e.g.
+    ``dbc-x.cloud.databricks.com``); local CLI profiles supply it with a scheme.
+    Normalize both so downstream URL building (OAuth token endpoint, Zerobus
+    insert) always produces a valid absolute URL."""
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return url
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    return url
+
+
 @dataclass(frozen=True)
 class Config:
     # --- Databricks workspace -------------------------------------------------
-    workspace_url: str = _env(
+    # Databricks Apps auto-inject DATABRICKS_HOST as a BARE hostname (no scheme),
+    # which makes the OAuth token_url schemeless and httpx rejects it ("Request
+    # URL is missing an 'http://' or 'https://' protocol"). Normalize to always
+    # carry https:// so the same code works whether the host arrives bare (App),
+    # scheme-prefixed (local CLI profile), or from the default below.
+    workspace_url: str = _normalize_url(_env(
         "DATABRICKS_HOST", "https://fevm-real-time-mode-demo.cloud.databricks.com"
-    )
+    ))
     workspace_id: str = _env("DATABRICKS_WORKSPACE_ID", "7474653348487172")
     region: str = _env("CLOUD_REGION", "us-east-1")
 
