@@ -109,6 +109,8 @@ def write_serving(spark, batch_df, batch_id: int) -> None:
     writes so the dashboard is unchanged. Idempotent (ON CONFLICT DO NOTHING).
     Reconnects once on a dropped connection.
     """
+    import datetime as _dt
+
     import pandas as pd
     from pyspark.sql import functions as F
 
@@ -127,9 +129,7 @@ def write_serving(spark, batch_df, batch_id: int) -> None:
                  r.ts_generated, r.ts_bronze, r.ts_silver)
                 for r in latest.itertuples(index=False)
             ]
-            lakebase_ms = 0
             if rows:
-                lb0 = time.perf_counter()
                 with conn.cursor() as cur:
                     cur.executemany(
                         """
@@ -141,22 +141,33 @@ def write_serving(spark, batch_df, batch_id: int) -> None:
                         """,
                         rows,
                     )
-                lakebase_ms = int((time.perf_counter() - lb0) * 1000)
+            # Serving landing time = when these rows become queryable in Lakebase.
+            # This is the instant we finished the upsert (ts_lakebase DEFAULT now()
+            # is stamped here too), captured on the driver in UTC so the serving
+            # hop is measured against the same wall clock as ts_silver.
+            landed = _dt.datetime.now(_dt.timezone.utc)
 
-            # per-hop medians + E2E percentiles over the batch (small pandas frame)
+            # Per-hop medians + true E2E percentiles over the batch (small frame).
+            # NOTE: the serving hop is silver → LANDED IN LAKEBASE (ts_lakebase −
+            # ts_silver), NOT the psycopg write wall-time — the write is trivial
+            # (~40 ms); what matters for a serving SLA is how long a parsed record
+            # takes to become queryable, which is dominated by the flow trigger
+            # cadence. E2E is generate → landed (the full trip), not gen → silver.
             pdf = batch_df.select("source_path", "ts_generated", "ts_bronze",
                                   "ts_silver").toPandas()
             src = pdf["source_path"].iloc[0] if not pdf.empty else "zerobus"
-            bronze_ms = silver_ms = 0
+            bronze_ms = silver_ms = lakebase_ms = 0
             p50 = p95 = p99 = 0
             rows_written = len(pdf)
             if not pdf.empty:
-                gen = pd.to_datetime(pdf["ts_generated"])
-                brz = pd.to_datetime(pdf["ts_bronze"])
-                slv = pd.to_datetime(pdf["ts_silver"])
+                landed_ts = pd.Timestamp(landed)
+                gen = pd.to_datetime(pdf["ts_generated"], utc=True)
+                brz = pd.to_datetime(pdf["ts_bronze"], utc=True)
+                slv = pd.to_datetime(pdf["ts_silver"], utc=True)
                 bronze_ms = int(((brz - gen).dt.total_seconds() * 1000).clip(lower=0).median() or 0)
                 silver_ms = int(((slv - brz).dt.total_seconds() * 1000).clip(lower=0).median() or 0)
-                e2e = ((slv - gen).dt.total_seconds() * 1000).clip(lower=0)
+                lakebase_ms = int(((landed_ts - slv).dt.total_seconds() * 1000).clip(lower=0).median() or 0)
+                e2e = ((landed_ts - gen).dt.total_seconds() * 1000).clip(lower=0)
                 p50, p95, p99 = (int(e2e.quantile(0.50)), int(e2e.quantile(0.95)),
                                  int(e2e.quantile(0.99)))
             batch_ms = int((time.perf_counter() - start) * 1000)

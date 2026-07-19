@@ -75,7 +75,16 @@ def stage_rail(state, snapshot: dict | None, freshness: float | None) -> html.Di
         _tick(),
         _hop("parse + validate", f"silver {_fmt_ms(snap.get('silver_ms'))}"),
         _tick(),
-        _hop("jdbc", f"lakebase {_fmt_ms(snap.get('lakebase_ms'))}"),
+        # Serving hop = silver → landed & queryable in Lakebase (ts_lakebase −
+        # ts_silver), NOT the psycopg write time. This is the number that matters
+        # for a serving SLA.
+        _hop("serving", f"lakebase {_fmt_ms(snap.get('lakebase_ms'))}"),
+        _tick(),
+        # Full trip: generate → landed in Lakebase (p50 over the batch). Called
+        # out as its own tile so the end-to-end story is on the rail, not just
+        # the hero p95 above.
+        _hop("end to end", f"e2e {_fmt_ms(snap.get('e2e_p50_ms'))}",
+             extra_style={"borderColor": PATH_COLOR[path]}),
     ]
 
     end = html.Div([

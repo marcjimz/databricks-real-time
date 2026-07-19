@@ -52,20 +52,33 @@ def _yrange(*series, pad=1.15, floor=1.0, cap=None) -> list:
 
 
 def _window_range(*row_groups) -> tuple:
-    """Sliding [now-WINDOW, now] x-range that advances every tick.
+    """Sliding [now-WINDOW, now] x-range that advances every tick — on the
+    WALL CLOCK, not the data clock.
 
-    'now' is anchored to the newest timestamp across all series so the window
-    tracks the live data clock (Lakebase is GMT/tz-aware; the app host may not
-    be), and falls back to wall-clock UTC when there is no data yet — so an
-    empty chart still shows a live, scrolling axis rather than a frozen one.
+    'now' must track real time so the window keeps scrolling even when the
+    generator is stopped (time proceeds; the sent/landed series just taper off).
+    But the data is stamped on the Lakebase clock (tz-aware GMT) while the app
+    host clock may be skewed/naive — so we anchor to wall-clock UTC and correct
+    by the offset between the newest data ts and wall-clock. That keeps the axis
+    moving live AND aligned to where the data actually plots. With no data yet,
+    the offset is zero (plain wall-clock UTC).
     """
+    wall = datetime.now(timezone.utc)
     latest = None
     for rows, key in row_groups:
         for r in rows:
             ts = _parse_ts(r.get(key))
             if ts is not None and (latest is None or ts > latest):
                 latest = ts
-    now = latest or datetime.now(timezone.utc)
+    # Only correct POSITIVE skew (data clock ahead of the host clock) so the
+    # newest points aren't clipped off the right edge. A negative delta means the
+    # newest data is simply OLD (generator stopped, or serving lag) — we must NOT
+    # shift the window back for that, or it would re-freeze on stop. Floor at 0 so
+    # a stale/absent data clock just yields pure wall-clock scrolling. Cap the
+    # positive correction so a bogus future timestamp can't fling the axis away.
+    offset = (latest - wall) if latest is not None else timedelta(0)
+    offset = max(timedelta(0), min(offset, timedelta(seconds=WINDOW_SECONDS)))
+    now = wall + offset
     return [now - timedelta(seconds=WINDOW_SECONDS), now]
 
 
