@@ -13,6 +13,14 @@ from __future__ import annotations
 import logging
 import sys
 
+# Eagerly import numpy ONCE at module load (single-threaded, before gunicorn's
+# worker threads start serving). plotly imports numpy lazily on the first figure
+# build; with --threads 8, two ticks racing that first import hit numpy's
+# "partially initialized module ... has no attribute 'ndarray' (circular import)"
+# error, which crashed the _refresh callback intermittently. Forcing the import
+# here fully initialises numpy before any request thread can race it.
+import numpy  # noqa: F401  (import-for-side-effect: pre-warm before threads)
+
 import dash
 from dash import ALL, Input, Output, ctx, dcc, html
 

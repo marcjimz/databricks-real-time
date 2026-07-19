@@ -193,8 +193,12 @@ class Supervisor:
             self._spawn_workers()
 
     async def _switch_path(self, path: str) -> None:
+        # Swapping the front door STOPS generation by default: the two paths are
+        # exclusive experiments, so switching ends the current test rather than
+        # silently continuing on the new transport. The operator clicks Run to
+        # start the new path deliberately (avoids surprise billing on Path B's
+        # classic ingest cluster, and keeps each path's metrics clean).
         self.state.switching = True
-        was_running = self.controls.running
         self.controls.running = False
         await asyncio.sleep(min(DRAIN_TIMEOUT_S, 1.0))  # let in-flight batches settle
         await self._teardown_workers()
@@ -204,7 +208,7 @@ class Supervisor:
         self._sink = sink_for(path, self._cfg)
         self._profile = profile_for(path)
         self._spawn_workers()
-        self.controls.running = was_running
+        self.controls.running = False  # stay stopped after a swap — click Run to start
         self.state.switching = False
 
     def _spawn_workers(self) -> None:
