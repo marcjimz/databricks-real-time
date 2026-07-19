@@ -21,6 +21,8 @@ path-agnostic — it never imports a concrete transport.
 from __future__ import annotations
 
 import abc
+import json
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -96,35 +98,99 @@ class ZerobusSink(TransportSink):
         await self._client.aclose()
 
 
+#: Envelope fields carried over the wire to Event Hubs. ts_generated travels as
+#: an ISO string (the consumer parses it); ts_transport/ts_bronze are stamped on
+#: the CONSUMER side (eventhub_to_bronze) so the broker + land hops are real and
+#: Path B stays directly comparable to Path A.
+_ENVELOPE_COLS = (*_BRONZE_COLS, "ts_generated")
+
+
 class KafkaSink(TransportSink):
     """Path B: produce the JSON envelope to Azure Event Hubs (Kafka endpoint).
 
-    Wired in Phase 3, once ``infra/eventhub.tf`` has provisioned the namespace.
     Transport = confluent-kafka producer, SASL_SSL/PLAIN to ``host:9093`` with
-    the Event Hubs connection string as the SASL password. A thin
-    ``eventhub_to_bronze`` Spark job (the Path B front door on the consumer
-    side) deserialises the envelope and lands it in the same bronze table, so
-    the two paths stay directly comparable.
+    the Event Hubs connection string as the SASL password (username is the
+    literal ``$ConnectionString``). A thin ``eventhub_to_bronze`` Structured
+    Streaming job (the Path B front door on the consumer side) deserialises the
+    envelope, stamps ``ts_transport`` + ``ts_bronze``, and lands it in the same
+    bronze table — so the two paths stay directly comparable.
+
+    The producer is created lazily on the first send (so merely constructing the
+    sink is cheap and can't fail), and its ``flush`` runs off the event loop to
+    keep the async supervisor non-blocking.
     """
 
     path = "eventhub"
 
     def __init__(self, cfg: Config):
         self._cfg = cfg
-        # Producer construction is deferred to Phase 3 so the app can already
-        # offer the path in the picker and fail loudly (not silently) if a user
-        # selects Event Hubs before it is provisioned.
-        self._producer = None
+        self._producer = None  # lazily built on first send
+
+    def _ensure_producer(self):
+        if self._producer is not None:
+            return self._producer
+        if not self._cfg.eventhub_bootstrap or not self._cfg.eventhub_connection_string:
+            raise RuntimeError(
+                "Event Hubs not configured: set EVENTHUB_BOOTSTRAP and "
+                "EVENTHUB_CONNECTION_STRING (see resources/eventhub secrets)."
+            )
+        from confluent_kafka import Producer
+
+        self._producer = Producer({
+            "bootstrap.servers": self._cfg.eventhub_bootstrap,
+            "security.protocol": "SASL_SSL",
+            "sasl.mechanism": "PLAIN",
+            "sasl.username": "$ConnectionString",
+            "sasl.password": self._cfg.eventhub_connection_string,
+            # Batch a little for throughput; EH tolerates larger linger well.
+            "linger.ms": 20,
+            "compression.type": "none",
+            "acks": "all",
+        })
+        return self._producer
+
+    def _to_envelope(self, rec: dict) -> bytes:
+        out = {k: rec.get(k) for k in _ENVELOPE_COLS}
+        out["source_path"] = self.path
+        return json.dumps(out, separators=(",", ":")).encode("utf-8")
 
     async def send(self, records: list[dict]) -> SendResult:
-        raise NotImplementedError(
-            "KafkaSink (Path B / Event Hubs) is provisioned and wired in Phase 3. "
-            "Set INGEST_PATH=zerobus until then."
-        )
+        """Produce the batch to Event Hubs and await broker acks off-loop."""
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        t0 = time.perf_counter()
+
+        def _produce_and_flush() -> tuple[int, str]:
+            producer = self._ensure_producer()
+            acked = {"n": 0, "err": ""}
+
+            def _cb(err, _msg):
+                if err is not None:
+                    acked["err"] = str(err)
+                else:
+                    acked["n"] += 1
+
+            for rec in records:
+                producer.produce(self._cfg.eventhub_topic,
+                                 value=self._to_envelope(rec), callback=_cb)
+            # Block (in the executor thread) until every message is acked.
+            pending = producer.flush(30)
+            if pending:
+                acked["err"] = acked["err"] or f"{pending} message(s) not delivered before timeout"
+            return acked["n"], acked["err"]
+
+        try:
+            count, err = await loop.run_in_executor(None, _produce_and_flush)
+        except Exception as exc:  # noqa: BLE001 — surface transport errors to the UI
+            return SendResult(ok=False, count=0,
+                              latency_ms=(time.perf_counter() - t0) * 1000, error=str(exc))
+        latency_ms = (time.perf_counter() - t0) * 1000
+        return SendResult(ok=not err, count=count, latency_ms=latency_ms, error=err)
 
     async def aclose(self) -> None:
-        if self._producer is not None:  # pragma: no cover - Phase 3
-            self._producer.flush()
+        if self._producer is not None:
+            self._producer.flush(10)
 
 
 def sink_for(path: str, cfg: Config) -> TransportSink:

@@ -135,7 +135,7 @@ def _layout() -> html.Div:
         ], className="grid2"),
         html.Div(_rail(st), id="rail-slot"),
         html.Div(_charts(st), id="charts-slot", style={"marginTop": "16px"}),
-        html.Div(live_tail(LAKEBASE.latest_transactions(25)), id="tail-slot",
+        html.Div(live_tail(LAKEBASE.latest_transactions(25, st.path)), id="tail-slot",
                  style={"marginTop": "16px"}),
     ])
 
@@ -275,11 +275,11 @@ def _switch_path(_clicks):
 def _refresh(_n):
     st = SUPERVISOR.state
     return (
-        active_card(st, e2e_p95_ms=LAKEBASE.serving_e2e_p95_ms()),
+        active_card(st, e2e_p95_ms=LAKEBASE.serving_e2e_p95_ms(st.path)),
         previous_card(LAKEBASE.path_summary(_other(st.path)), st.path),
         _rail(st),
         _charts(st),
-        live_tail(LAKEBASE.latest_transactions(25)),
+        live_tail(LAKEBASE.latest_transactions(25, st.path)),
     )
 
 

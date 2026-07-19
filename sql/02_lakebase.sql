@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS rt_stage_metrics (
   rows_written int,
   batch_ms     int,
   lag_s        numeric,              -- v4: bronze frontier − silver frontier (backlog)
+  broker_ms    int,                  -- Path B: median ts_transport − ts_generated (EH accept); NULL on Path A
   bronze_ms    int,                  -- median ts_bronze − ts_generated (transport + land)
   silver_ms    int,                  -- median ts_silver − ts_bronze (parse + commit)
   lakebase_ms  int,                  -- wall time of the rt_latest_transactions upsert
@@ -58,6 +59,9 @@ ALTER TABLE rt_stage_metrics ADD COLUMN IF NOT EXISTS bronze_ms   int;
 ALTER TABLE rt_stage_metrics ADD COLUMN IF NOT EXISTS silver_ms   int;
 ALTER TABLE rt_stage_metrics ADD COLUMN IF NOT EXISTS lakebase_ms int;
 ALTER TABLE rt_stage_metrics ADD COLUMN IF NOT EXISTS quarantined int;
+-- Path B broker hop: median ts_transport − ts_generated (Event Hubs accept
+-- time). NULL/0 on Path A (Zerobus has no broker). Drives the rail's broker badge.
+ALTER TABLE rt_stage_metrics ADD COLUMN IF NOT EXISTS broker_ms   int;
 
 -- (rt_gold_snapshots removed: the gold tier was dropped in the DLT serverless
 -- migration — nothing consumed it. The dashboard reads rt_latest_transactions +

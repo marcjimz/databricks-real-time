@@ -153,10 +153,10 @@ def write_serving(spark, batch_df, batch_id: int) -> None:
             # (~40 ms); what matters for a serving SLA is how long a parsed record
             # takes to become queryable, which is dominated by the flow trigger
             # cadence. E2E is generate → landed (the full trip), not gen → silver.
-            pdf = batch_df.select("source_path", "ts_generated", "ts_bronze",
-                                  "ts_silver").toPandas()
+            pdf = batch_df.select("source_path", "ts_generated", "ts_transport",
+                                  "ts_bronze", "ts_silver").toPandas()
             src = pdf["source_path"].iloc[0] if not pdf.empty else "zerobus"
-            bronze_ms = silver_ms = lakebase_ms = 0
+            bronze_ms = silver_ms = lakebase_ms = broker_ms = 0
             p50 = p95 = p99 = 0
             rows_written = len(pdf)
             if not pdf.empty:
@@ -167,6 +167,11 @@ def write_serving(spark, batch_df, batch_id: int) -> None:
                 bronze_ms = int(((brz - gen).dt.total_seconds() * 1000).clip(lower=0).median() or 0)
                 silver_ms = int(((slv - brz).dt.total_seconds() * 1000).clip(lower=0).median() or 0)
                 lakebase_ms = int(((landed_ts - slv).dt.total_seconds() * 1000).clip(lower=0).median() or 0)
+                # broker hop (Path B only): generate → Event Hubs accept
+                # (ts_transport). NULL on Path A (Zerobus has no broker) → 0.
+                trn = pd.to_datetime(pdf["ts_transport"], utc=True, errors="coerce")
+                broker = ((trn - gen).dt.total_seconds() * 1000).clip(lower=0).dropna()
+                broker_ms = int(broker.median()) if not broker.empty else 0
                 e2e = ((landed_ts - gen).dt.total_seconds() * 1000).clip(lower=0)
                 p50, p95, p99 = (int(e2e.quantile(0.50)), int(e2e.quantile(0.95)),
                                  int(e2e.quantile(0.99)))
@@ -177,12 +182,13 @@ def write_serving(spark, batch_df, batch_id: int) -> None:
                     """
                     INSERT INTO rt_stage_metrics
                       (source_path, pipeline, batch_id, rows_written, batch_ms, lag_s,
-                       bronze_ms, silver_ms, lakebase_ms, quarantined,
+                       bronze_ms, silver_ms, lakebase_ms, broker_ms, quarantined,
                        e2e_p50_ms, e2e_p95_ms, e2e_p99_ms, annotation)
-                    VALUES (%s,'bronze_to_silver',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,'bronze_to_silver',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (src, batch_id, rows_written, batch_ms, 0.0,
-                     bronze_ms, silver_ms, lakebase_ms, 0, p50, p95, p99, None),
+                     bronze_ms, silver_ms, lakebase_ms, broker_ms, 0,
+                     p50, p95, p99, None),
                 )
             return
         except Exception:

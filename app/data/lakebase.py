@@ -123,10 +123,21 @@ class LakebaseClient:
             return []
         return self._execute("read", sql, params, fetch=True) or []
 
-    def latest_transactions(self, limit: int = 25) -> list[dict]:
-        """Newest transactions for the live tail (slot G)."""
+    def latest_transactions(self, limit: int = 25,
+                            source_path: str | None = None) -> list[dict]:
+        """Newest transactions for the live tail (slot G).
+
+        Path-scoped when ``source_path`` is given (the norm — the tail should show
+        only the ACTIVE path's records, matching the rest of the dashboard). Left
+        unfiltered only when a caller explicitly wants a cross-path view. Every
+        record carries ``source_path`` ('zerobus' | 'eventhub'), stamped at
+        generation and preserved through bronze → silver → serving, so the filter
+        is exact.
+        """
+        where = "WHERE source_path = %s" if source_path else ""
+        params = (source_path, limit) if source_path else (limit,)
         return self._query(
-            """
+            f"""
             SELECT event_id, source_path, facility_id, message_type,
                    patient_mrn, unit, summary,
                    ts_generated, ts_bronze, ts_silver, ts_lakebase,
@@ -137,27 +148,33 @@ class LakebaseClient:
                    -- full trip: generation → serving-layer landing
                    GREATEST(EXTRACT(EPOCH FROM (ts_lakebase - ts_generated)), 0) * 1000 AS e2e_ms
             FROM rt_latest_transactions
+            {where}
             ORDER BY ts_lakebase DESC
             LIMIT %s
             """,
-            (limit,),
+            params,
         )
 
-    def serving_e2e_p95_ms(self) -> float | None:
-        """Full-trip (Zerobus → Lakebase) p95 latency over the freshest rows.
+    def serving_e2e_p95_ms(self, source_path: str | None = None) -> float | None:
+        """Full-trip (ingest → Lakebase) p95 latency over the freshest rows.
 
         Computed from rt_latest_transactions (ts_lakebase − ts_generated) so the
         hero number matches the tail's e2e column. The stage-metric e2e stops at
-        silver, so it must NOT be used for the serving-layer headline.
+        silver, so it must NOT be used for the serving-layer headline. Path-scoped
+        when source_path is given so the hero reflects only the ACTIVE path (else
+        a stale other-path burst could skew the headline once both paths run).
         """
+        where = "AND source_path = %s" if source_path else ""
+        params = (source_path,) if source_path else ()
         rows = self._query(
-            """
+            f"""
             SELECT percentile_cont(0.95) WITHIN GROUP (
                      ORDER BY EXTRACT(EPOCH FROM (ts_lakebase - ts_generated)) * 1000
                    ) AS p95
             FROM rt_latest_transactions
-            WHERE ts_lakebase > now() - interval '60 seconds'
-            """
+            WHERE ts_lakebase > now() - interval '60 seconds' {where}
+            """,
+            params,
         )
         p95 = rows[0]["p95"] if rows else None
         return float(p95) if p95 is not None else None
@@ -198,7 +215,8 @@ class LakebaseClient:
         """
         rows = self._query(
             """
-            SELECT avg(bronze_ms)   AS bronze_ms,
+            SELECT avg(broker_ms)   AS broker_ms,
+                   avg(bronze_ms)   AS bronze_ms,
                    avg(silver_ms)   AS silver_ms,
                    avg(lakebase_ms) AS lakebase_ms,
                    avg(e2e_p50_ms)  AS e2e_p50_ms,
