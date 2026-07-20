@@ -41,3 +41,12 @@ resources:
             branch: projects/${var.lakebase_project_id}/branches/production
             database: projects/${var.lakebase_project_id}/branches/production/databases/${var.lakebase_database_id}
             permission: CAN_CONNECT_AND_CREATE
+        # Event Hubs connection string (Path B producer auth). Maps the app.yaml
+        # valueFrom key `eventhub_connection_string` to a secret-scope key. Create
+        # it once (see app/app.yaml comment):
+        #   databricks secrets put-secret hl7-rti eventhub_connection_string --string-value "<conn>"
+        - name: eventhub_connection_string
+          secret:
+            scope: hl7-rti
+            key: eventhub_connection_string
+            permission: READ

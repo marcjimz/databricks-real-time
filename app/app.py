@@ -13,6 +13,14 @@ from __future__ import annotations
 import logging
 import sys
 
+# Eagerly import numpy ONCE at module load (single-threaded, before gunicorn's
+# worker threads start serving). plotly imports numpy lazily on the first figure
+# build; with --threads 8, two ticks racing that first import hit numpy's
+# "partially initialized module ... has no attribute 'ndarray' (circular import)"
+# error, which crashed the _refresh callback intermittently. Forcing the import
+# here fully initialises numpy before any request thread can race it.
+import numpy  # noqa: F401  (import-for-side-effect: pre-warm before threads)
+
 import dash
 from dash import ALL, Input, Output, ctx, dcc, html
 
@@ -135,7 +143,7 @@ def _layout() -> html.Div:
         ], className="grid2"),
         html.Div(_rail(st), id="rail-slot"),
         html.Div(_charts(st), id="charts-slot", style={"marginTop": "16px"}),
-        html.Div(live_tail(LAKEBASE.latest_transactions(25)), id="tail-slot",
+        html.Div(live_tail(LAKEBASE.latest_transactions(25, st.path)), id="tail-slot",
                  style={"marginTop": "16px"}),
     ])
 
@@ -275,11 +283,11 @@ def _switch_path(_clicks):
 def _refresh(_n):
     st = SUPERVISOR.state
     return (
-        active_card(st, e2e_p95_ms=LAKEBASE.serving_e2e_p95_ms()),
+        active_card(st, e2e_p95_ms=LAKEBASE.serving_e2e_p95_ms(st.path)),
         previous_card(LAKEBASE.path_summary(_other(st.path)), st.path),
         _rail(st),
         _charts(st),
-        live_tail(LAKEBASE.latest_transactions(25)),
+        live_tail(LAKEBASE.latest_transactions(25, st.path)),
     )
 
 

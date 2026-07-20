@@ -73,6 +73,17 @@ variables:
       owner's workspace identity (their email), which is the project-owner role.
     default: marcin.jimenez@databricks.com
 
+  # --- Event Hubs (Path B) --------------------------------------------------
+  # Kafka endpoint of the Azure Event Hubs namespace (see the event-hub-azure-
+  # resources memo). The connection string is NOT here — it is a secret, injected
+  # from a Databricks secret scope (see resources/eventhub_job.yml).
+  eventhub_bootstrap:
+    description: Event Hubs Kafka endpoint (host:9093) for Path B ingestion.
+    default: hl7-rti-demo-mj.servicebus.windows.net:9093
+  eventhub_topic:
+    description: Event Hubs / Kafka topic (the hub name) the app produces to.
+    default: hl7-events
+
 include:
   - resources/*.yml
 

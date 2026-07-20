@@ -37,4 +37,15 @@ env:
   # app resource (never PGPASSWORD — the app mints it per connection).
   - name: ENDPOINT_NAME
     value: projects/rti-demo/branches/production/endpoints/primary
-  # Event Hubs values (EVENTHUB_*) are injected as app secrets in Phase 3.
+  # --- Event Hubs (Path B) --------------------------------------------------
+  # The generator's KafkaSink produces to Event Hubs when the active path is
+  # 'eventhub'. Bootstrap + topic are plain config; the connection string is a
+  # SECRET, injected via valueFrom a secret scope (never inline). Create it once:
+  #   databricks secrets create-scope hl7-rti
+  #   databricks secrets put-secret hl7-rti eventhub_connection_string --string-value "<conn>"
+  - name: EVENTHUB_BOOTSTRAP
+    value: hl7-rti-demo-mj.servicebus.windows.net:9093
+  - name: EVENTHUB_TOPIC
+    value: hl7-events
+  - name: EVENTHUB_CONNECTION_STRING
+    valueFrom: eventhub_connection_string

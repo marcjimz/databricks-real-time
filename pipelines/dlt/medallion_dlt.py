@@ -201,3 +201,108 @@ def to_lakebase():
     # bronze re-parse) — halves the parse load and reuses the exact rows written
     # to silver, which already carry all ts_* hops.
     return dlt.read_stream("silver_hl7_parsed")
+
+
+# --- Path B: Event Hubs → bronze (native Kafka source, IN this pipeline) ------
+# The second front door. Serverless DLT egress reaches the Event Hubs Kafka
+# endpoint on :9093 (validated) — unlike the App, which must use AMQP/WS on 443.
+# bronze_hl7_raw is written externally by Zerobus, so DLT can't @dlt.table-own it;
+# instead a foreach_batch_sink appends the EH-sourced rows to bronze, and the
+# existing silver flow reads bronze (now fed by BOTH paths) and converges. This
+# is "one pipeline, both sources" — Zerobus and Event Hubs land in the same
+# bronze → silver → Lakebase, so everything downstream is byte-for-byte identical.
+EH_BOOTSTRAP = spark.conf.get("hl7.eventhub_bootstrap", "")
+EH_TOPIC = spark.conf.get("hl7.eventhub_topic", "hl7-events")
+
+# The connection string is a SECRET. DLT does NOT resolve {{secrets/...}} inside
+# the `configuration` map — spark.conf.get would return the literal reference
+# ("...not of expected format" SASL failure). So pass the scope/key NAMES via
+# config and decrypt in code with dbutils.secrets.get (the supported path).
+_EH_SECRET_SCOPE = spark.conf.get("hl7.eventhub_secret_scope", "")
+_EH_SECRET_KEY = spark.conf.get("hl7.eventhub_secret_key", "")
+
+
+def _eh_connection_string() -> str:
+    if not _EH_SECRET_SCOPE or not _EH_SECRET_KEY:
+        return ""
+    try:
+        from databricks.sdk.runtime import dbutils as _dbutils
+        return _dbutils.secrets.get(scope=_EH_SECRET_SCOPE, key=_EH_SECRET_KEY)
+    except Exception:
+        return ""
+
+
+EH_CONNECTION_STRING = _eh_connection_string()
+
+_EH_ENVELOPE = StructType([
+    StructField("event_id", StringType()),
+    StructField("source_path", StringType()),
+    StructField("facility_id", StringType()),
+    StructField("message_type", StringType()),
+    StructField("hl7_raw", StringType()),
+    StructField("gen_worker_id", StringType()),
+    StructField("ts_generated", StringType()),
+])
+
+
+def _eh_kafka_stream():
+    """Event Hubs Kafka source → bronze-shaped rows with real Path-B timestamps.
+
+    ts_transport = the Kafka record timestamp (Event Hubs accept time = the broker
+    hop, Path B only). ts_bronze = current_timestamp() at read (land time).
+    source_path is forced to 'eventhub' on the ingest side (not trusting the
+    producer field) so the tag can't be spoofed.
+    """
+    jaas = (
+        'kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule '
+        'required username="$ConnectionString" '
+        f'password="{EH_CONNECTION_STRING}";'
+    )
+    raw = (
+        spark.readStream.format("kafka")
+        .option("kafka.bootstrap.servers", EH_BOOTSTRAP)
+        .option("kafka.sasl.mechanism", "PLAIN")
+        .option("kafka.security.protocol", "SASL_SSL")
+        .option("kafka.sasl.jaas.config", jaas)
+        .option("subscribe", EH_TOPIC)
+        .option("startingOffsets", "latest")
+        .option("failOnDataLoss", "false")
+        .load()
+    )
+    return (
+        raw.select(
+            F.col("value").cast("string").alias("json"),
+            F.col("timestamp").alias("kafka_ts"),
+        )
+        .select(F.from_json("json", _EH_ENVELOPE).alias("e"), "kafka_ts")
+        .select(
+            F.col("e.event_id").alias("event_id"),
+            F.lit("eventhub").alias("source_path"),
+            F.col("e.facility_id").alias("facility_id"),
+            F.col("e.message_type").alias("message_type"),
+            F.col("e.hl7_raw").alias("hl7_raw"),
+            F.col("e.gen_worker_id").alias("gen_worker_id"),
+            F.to_timestamp("e.ts_generated").alias("ts_generated"),
+            F.col("kafka_ts").alias("ts_transport"),
+            F.current_timestamp().alias("ts_bronze"),
+        )
+    )
+
+
+# Register the Event Hubs → bronze sink + flow ONLY when EH is configured, so a
+# Zerobus-only deployment (no EH secret) never fails the pipeline on a missing
+# broker. Sinks/flows are registered at module load, hence the guard here.
+if EH_BOOTSTRAP and EH_CONNECTION_STRING:
+
+    @dlt.foreach_batch_sink(name="eh_to_bronze")
+    def _eh_to_bronze(df, batch_id):
+        # Append EH-sourced rows to the shared bronze table (Zerobus also writes
+        # it). Derive spark from df.sparkSession — never close over module globals
+        # (non-serializable → flow dies). Thin: parse/serve happen downstream.
+        (df.select("event_id", "source_path", "facility_id", "message_type",
+                   "hl7_raw", "gen_worker_id", "ts_generated", "ts_transport", "ts_bronze")
+           .write.format("delta").mode("append").saveAsTable(BRONZE))
+
+    @dlt.append_flow(target="eh_to_bronze")
+    def eventhub_to_bronze():
+        return _eh_kafka_stream()
