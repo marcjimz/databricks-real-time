@@ -62,7 +62,7 @@ def header(state) -> html.Div:
         html.Label("Streams"),
         html.Div([
             html.Button("−", id="streams-dec", n_clicks=0, className="step"),
-            html.Output(str(state.workers or 2), id="streams-out"),
+            html.Output(str(state.workers), id="streams-out"),
             html.Button("+", id="streams-inc", n_clicks=0, className="step"),
         ], className="stepper"),
     ], className="ctl")

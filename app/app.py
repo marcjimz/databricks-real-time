@@ -185,8 +185,8 @@ def _toggle_run(_n):
     return ("run" if running else "run stopped"), label
 
 
-@app.callback(Output("rate-out", "children"), Input("rate-slider", "value"),
-              prevent_initial_call=True)
+@app.callback(Output("rate-out", "children", allow_duplicate=True),
+              Input("rate-slider", "value"), prevent_initial_call=True)
 def _set_rate(v):
     SUPERVISOR.set_rate(v or 1)
     _annotate(f"rate {int(v or 1)}/s")
@@ -200,7 +200,7 @@ def _set_malformed(v):
     return f"{int(v or 0)}%"
 
 
-@app.callback(Output("streams-out", "children"),
+@app.callback(Output("streams-out", "children", allow_duplicate=True),
               Input("streams-inc", "n_clicks"), Input("streams-dec", "n_clicks"),
               prevent_initial_call=True)
 def _set_streams(_inc, _dec):
@@ -278,7 +278,15 @@ def _switch_path(_clicks):
     Output("rail-slot", "children"),
     Output("charts-slot", "children"),
     Output("tail-slot", "children"),
+    # Also re-assert the Streams/Rate readouts from live control state every tick.
+    # The header slot itself isn't re-rendered per tick, and the +/− and slider
+    # callbacks only fire on user input — so without this the readouts could drift
+    # from the true control value (e.g. a prior run left workers at 16 while the
+    # header still showed 2). Driving them here keeps display == what actually runs.
+    Output("streams-out", "children", allow_duplicate=True),
+    Output("rate-out", "children", allow_duplicate=True),
     Input("tick", "n_intervals"),
+    prevent_initial_call=True,
 )
 def _refresh(_n):
     st = SUPERVISOR.state
@@ -288,6 +296,8 @@ def _refresh(_n):
         _rail(st),
         _charts(st),
         live_tail(LAKEBASE.latest_transactions(25, st.path)),
+        str(st.workers),
+        f"{st.rate_per_worker or 50}/s",
     )
 
 

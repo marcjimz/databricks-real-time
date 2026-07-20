@@ -99,7 +99,10 @@ class Supervisor:
         self._cfg = cfg
         self._on_rollup = on_rollup      # callable(list[dict]) -> None, optional
         self.controls = Controls()
-        self.state = GeneratorState(path=cfg.ingest_path)
+        # Seed the displayed workers from the control so the very first render
+        # (before any rollup) shows the true setting, not a stale default.
+        self.state = GeneratorState(path=cfg.ingest_path,
+                                    workers=self.controls.workers)
 
         self._sink: TransportSink | None = None
         self._profile: Profile = profile_for(cfg.ingest_path)
@@ -297,7 +300,12 @@ class Supervisor:
             self._acks.clear()
 
             self.state.running = self.controls.running
-            self.state.workers = self.controls.workers if self.controls.running else 0
+            # Mirror the CONTROL setting (not the running count): the Streams
+            # readout must show what WILL run, whether started or stopped. Showing
+            # 0-when-stopped made the header fall back to a phantom "2" that
+            # disagreed with the real control value (e.g. left at 16 by a prior
+            # run), so the UI said 2 while the generator spawned 16.
+            self.state.workers = self.controls.workers
             self.state.rate_per_worker = self.controls.rate_per_worker
             self.state.malformed_pct = self.controls.malformed_pct
             self.state.bursting = time.monotonic() < self.controls.burst_until
