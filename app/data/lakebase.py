@@ -252,6 +252,44 @@ class LakebaseClient:
         )
         return rows[0] if rows else None
 
+    def write_path_summary(self, source_path: str) -> None:
+        """Freeze a path's last-run stats into rt_path_summary (the 'Previous run'
+        card). Called when LEAVING a path (on switch/stop) so the other card shows
+        the run you just finished. E2E percentiles come from the freshest serving
+        rows; peak_rate is the max per-second total sent (summed across workers)
+        from rt_gen_metrics. ON CONFLICT updates the single per-path row."""
+        if not self.configured:
+            return
+        self._execute(
+            "write",
+            """
+            INSERT INTO rt_path_summary
+              (source_path, last_run_ended, peak_rate, e2e_p50_ms, e2e_p95_ms, quarantined)
+            SELECT %s, now(),
+                   COALESCE((
+                     SELECT max(per_sec) FROM (
+                       SELECT sum(sent) AS per_sec FROM rt_gen_metrics
+                       WHERE source_path = %s AND ts > now() - interval '120 seconds'
+                       GROUP BY date_trunc('second', ts)
+                     ) g), 0)::int,
+                   COALESCE(percentile_cont(0.50) WITHIN GROUP (
+                     ORDER BY EXTRACT(EPOCH FROM (ts_lakebase - ts_generated))*1000), 0)::int,
+                   COALESCE(percentile_cont(0.95) WITHIN GROUP (
+                     ORDER BY EXTRACT(EPOCH FROM (ts_lakebase - ts_generated))*1000), 0)::int,
+                   0
+            FROM rt_latest_transactions
+            WHERE source_path = %s AND ts_lakebase > now() - interval '120 seconds'
+            ON CONFLICT (source_path) DO UPDATE SET
+              last_run_ended = EXCLUDED.last_run_ended,
+              peak_rate      = GREATEST(rt_path_summary.peak_rate, EXCLUDED.peak_rate),
+              e2e_p50_ms     = EXCLUDED.e2e_p50_ms,
+              e2e_p95_ms     = EXCLUDED.e2e_p95_ms,
+              quarantined    = EXCLUDED.quarantined
+            """,
+            (source_path, source_path, source_path),
+            fetch=False,
+        )
+
     # -- reset (demo housekeeping) -------------------------------------------
     def reset_serving(self) -> None:
         """Truncate the Lakebase serving tables for a clean demo start.

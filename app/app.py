@@ -171,7 +171,8 @@ app.layout = _layout
 
 
 # --- control callbacks (write to the supervisor) ----------------------------
-@app.callback(Output("run-toggle", "className"), Output("run-toggle", "children"),
+@app.callback(Output("run-toggle", "className", allow_duplicate=True),
+              Output("run-toggle", "children", allow_duplicate=True),
               Input("run-toggle", "n_clicks"), prevent_initial_call=True)
 def _toggle_run(_n):
     if SUPERVISOR.controls.running:
@@ -251,19 +252,34 @@ def _reset(_n):
 @app.callback(
     Output({"type": "path-pick", "path": ALL}, "className"),
     Output("profile-chip", "children"),
+    # Switching STOPS generation (see supervisor._switch_path), so re-render the
+    # run-toggle to 'Stopped' — otherwise the button kept showing 'Running' while
+    # the generator was actually idle (the toggle was only written by its own
+    # click callback, never on a swap).
+    Output("run-toggle", "className", allow_duplicate=True),
+    Output("run-toggle", "children", allow_duplicate=True),
     Input({"type": "path-pick", "path": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
 def _switch_path(_clicks):
     picked = ctx.triggered_id
     if picked and isinstance(picked, dict):
+        # Freeze the LEAVING path's stats into the 'Previous run' card before the
+        # switch tears its workers down, so the comparison card populates.
+        leaving = SUPERVISOR.state.path
+        if picked["path"] != leaving:
+            LAKEBASE.write_path_summary(leaving)
         SUPERVISOR.switch_path(picked["path"])
         _annotate(f"→ {PATH_LABEL.get(picked['path'], picked['path'])}")
     order = [o["id"]["path"] for o in ctx.outputs_list[0]]
     active = SUPERVISOR.state.path
     classes = ["seg-btn on" if p == active else "seg-btn" for p in order]
+    running = SUPERVISOR.controls.running
+    run_label = [html.Span(className="dot"),
+                 html.Span("Running" if running else "Stopped")]
     from generator.profiles import profile_for
-    return classes, f"profile: {profile_for(active).name}"
+    return (classes, f"profile: {profile_for(active).name}",
+            "run" if running else "run stopped", run_label)
 
 
 # --- single 1 Hz refresh (ONE request/tick) --------------------------------
@@ -285,11 +301,19 @@ def _switch_path(_clicks):
     # header still showed 2). Driving them here keeps display == what actually runs.
     Output("streams-out", "children", allow_duplicate=True),
     Output("rate-out", "children", allow_duplicate=True),
+    # Self-heal the run indicator too: it's only written on click/switch, so a
+    # missed update (or a swap on another tab) could leave it stale. Re-assert it
+    # from live control state every tick so it always reflects reality.
+    Output("run-toggle", "className", allow_duplicate=True),
+    Output("run-toggle", "children", allow_duplicate=True),
     Input("tick", "n_intervals"),
     prevent_initial_call=True,
 )
 def _refresh(_n):
     st = SUPERVISOR.state
+    running = SUPERVISOR.controls.running
+    run_label = [html.Span(className="dot"),
+                 html.Span("Running" if running else "Stopped")]
     return (
         active_card(st, e2e_p95_ms=LAKEBASE.serving_e2e_p95_ms(st.path)),
         previous_card(LAKEBASE.path_summary(_other(st.path)), st.path),
@@ -298,6 +322,8 @@ def _refresh(_n):
         live_tail(LAKEBASE.latest_transactions(25, st.path)),
         str(st.workers),
         f"{st.rate_per_worker or 50}/s",
+        "run" if running else "run stopped",
+        run_label,
     )
 
 
