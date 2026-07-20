@@ -48,6 +48,16 @@ resources:
         hl7.lakebase_database: ${var.lakebase_database}
         hl7.lakebase_user: ${var.lakebase_user}
         hl7.endpoint_name: ${var.lakebase_endpoint_name}
+        # Path B (Event Hubs) — the native Kafka source flow into bronze. Serverless
+        # DLT egress reaches EH :9093 (validated). Connection string is a SECRET,
+        # referenced from the hl7-rti scope (never inline). When these are set the
+        # medallion registers the EH→bronze flow; a Zerobus-only deploy can omit them.
+        hl7.eventhub_bootstrap: ${var.eventhub_bootstrap}
+        hl7.eventhub_topic: ${var.eventhub_topic}
+        # Pass the secret SCOPE/KEY names (not the value) — DLT config does not
+        # resolve {{secrets/...}}, so the pipeline reads it via dbutils.secrets.get.
+        hl7.eventhub_secret_scope: hl7-rti
+        hl7.eventhub_secret_key: eventhub_connection_string
         # Drive every streaming flow (bronze→silver AND the Lakebase append_flow
         # sink) at a 1 s micro-batch cadence instead of DLT's default. This is the
         # lever that shrinks the silver + serving hops toward real-time — the ~4 s

@@ -106,18 +106,24 @@ _ENVELOPE_COLS = (*_BRONZE_COLS, "ts_generated")
 
 
 class KafkaSink(TransportSink):
-    """Path B: produce the JSON envelope to Azure Event Hubs (Kafka endpoint).
+    """Path B: produce the JSON envelope to Azure Event Hubs.
 
-    Transport = confluent-kafka producer, SASL_SSL/PLAIN to ``host:9093`` with
-    the Event Hubs connection string as the SASL password (username is the
-    literal ``$ConnectionString``). A thin ``eventhub_to_bronze`` Structured
-    Streaming job (the Path B front door on the consumer side) deserialises the
-    envelope, stamps ``ts_transport`` + ``ts_bronze``, and lands it in the same
-    bronze table — so the two paths stay directly comparable.
+    Transport = the **azure-eventhub SDK over AMQP-on-WebSocket (port 443)**, NOT
+    the Kafka protocol (SASL_SSL on 9093). The dashboard runs as a Databricks App,
+    whose serverless egress is an HTTPS/443-oriented proxy ("Apps: limited support"
+    for network policies) — a raw Kafka TCP connect to :9093 times out from the
+    app even though the workspace policy is FULL_ACCESS and Event Hubs is public.
+    AMQP-over-WebSocket tunnels the same producer semantics inside a 443 WebSocket,
+    so it rides the egress path that already works (the same one that pulls PyPI).
 
-    The producer is created lazily on the first send (so merely constructing the
-    sink is cheap and can't fail), and its ``flush`` runs off the event loop to
-    keep the async supervisor non-blocking.
+    The class name stays ``KafkaSink`` because it is still the Path-B / Event Hubs
+    front door; only the wire transport changed. The CONSUMER
+    (``eventhub_to_bronze``) still reads via the Kafka protocol — it runs on a job
+    cluster with full VPC egress, so :9093 is fine there. Both sides talk to the
+    same Event Hub; producer picks the transport its network allows.
+
+    The producer is built lazily on first send and its blocking send runs off the
+    event loop so the async supervisor stays responsive.
     """
 
     path = "eventhub"
@@ -129,24 +135,19 @@ class KafkaSink(TransportSink):
     def _ensure_producer(self):
         if self._producer is not None:
             return self._producer
-        if not self._cfg.eventhub_bootstrap or not self._cfg.eventhub_connection_string:
+        if not self._cfg.eventhub_connection_string:
             raise RuntimeError(
-                "Event Hubs not configured: set EVENTHUB_BOOTSTRAP and "
-                "EVENTHUB_CONNECTION_STRING (see resources/eventhub secrets)."
+                "Event Hubs not configured: set EVENTHUB_CONNECTION_STRING "
+                "(see resources/eventhub secrets)."
             )
-        from confluent_kafka import Producer
+        from azure.eventhub import EventHubProducerClient, TransportType
 
-        self._producer = Producer({
-            "bootstrap.servers": self._cfg.eventhub_bootstrap,
-            "security.protocol": "SASL_SSL",
-            "sasl.mechanism": "PLAIN",
-            "sasl.username": "$ConnectionString",
-            "sasl.password": self._cfg.eventhub_connection_string,
-            # Batch a little for throughput; EH tolerates larger linger well.
-            "linger.ms": 20,
-            "compression.type": "none",
-            "acks": "all",
-        })
+        self._producer = EventHubProducerClient.from_connection_string(
+            self._cfg.eventhub_connection_string,
+            eventhub_name=self._cfg.eventhub_topic,
+            # 443 WebSocket tunnel — the whole point (see class docstring).
+            transport_type=TransportType.AmqpOverWebsocket,
+        )
         return self._producer
 
     def _to_envelope(self, rec: dict) -> bytes:
@@ -155,42 +156,45 @@ class KafkaSink(TransportSink):
         return json.dumps(out, separators=(",", ":")).encode("utf-8")
 
     async def send(self, records: list[dict]) -> SendResult:
-        """Produce the batch to Event Hubs and await broker acks off-loop."""
+        """Produce the batch to Event Hubs (AMQP/WS) and await the send off-loop."""
         import asyncio
+
+        from azure.eventhub import EventData
 
         loop = asyncio.get_running_loop()
         t0 = time.perf_counter()
 
-        def _produce_and_flush() -> tuple[int, str]:
+        def _send_batch() -> int:
             producer = self._ensure_producer()
-            acked = {"n": 0, "err": ""}
-
-            def _cb(err, _msg):
-                if err is not None:
-                    acked["err"] = str(err)
-                else:
-                    acked["n"] += 1
-
+            batch = producer.create_batch()
+            sent = 0
             for rec in records:
-                producer.produce(self._cfg.eventhub_topic,
-                                 value=self._to_envelope(rec), callback=_cb)
-            # Block (in the executor thread) until every message is acked.
-            pending = producer.flush(30)
-            if pending:
-                acked["err"] = acked["err"] or f"{pending} message(s) not delivered before timeout"
-            return acked["n"], acked["err"]
+                try:
+                    batch.add(EventData(self._to_envelope(rec)))
+                    sent += 1
+                except ValueError:
+                    # Batch full (256 KB EH cap) — flush and start a new one.
+                    producer.send_batch(batch)
+                    batch = producer.create_batch()
+                    batch.add(EventData(self._to_envelope(rec)))
+                    sent += 1
+            producer.send_batch(batch)  # send_batch blocks until the broker acks
+            return sent
 
         try:
-            count, err = await loop.run_in_executor(None, _produce_and_flush)
+            count = await loop.run_in_executor(None, _send_batch)
         except Exception as exc:  # noqa: BLE001 — surface transport errors to the UI
             return SendResult(ok=False, count=0,
                               latency_ms=(time.perf_counter() - t0) * 1000, error=str(exc))
         latency_ms = (time.perf_counter() - t0) * 1000
-        return SendResult(ok=not err, count=count, latency_ms=latency_ms, error=err)
+        return SendResult(ok=True, count=count, latency_ms=latency_ms)
 
     async def aclose(self) -> None:
         if self._producer is not None:
-            self._producer.flush(10)
+            try:
+                self._producer.close()
+            except Exception:
+                pass
 
 
 def sink_for(path: str, cfg: Config) -> TransportSink:

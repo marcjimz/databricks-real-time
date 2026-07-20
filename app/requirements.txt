@@ -3,6 +3,10 @@ dash==2.17.1
 plotly==5.24.1
 httpx[http2]==0.27.2
 psycopg[binary]==3.2.3
-confluent-kafka==2.6.0
+# Path B (Event Hubs) producer: azure-eventhub over AMQP-on-WebSocket (port 443),
+# because the App's serverless egress can't do the Kafka protocol on :9093 (see
+# KafkaSink docstring). websocket-client is the sync WebSocket transport backend.
+azure-eventhub==5.11.7
+websocket-client==1.8.0
 databricks-sdk==0.120.0
 python-dateutil==2.9.0.post0
