@@ -27,10 +27,13 @@ pipelines on a live HL7 feed:
 ## Architecture
 
 ```
-HL7 generator (app)  ──┬── Zerobus Direct Write (REST) ─────────────┐
-                       │                                            │
-                       └── Azure Event Hubs (Kafka) ── DLT source ──┤
-                                                                    ▼
+  HL7 generator (app)
+      │
+      ├── Zerobus Direct Write (REST) ──────┐
+      │                                     │  ingestion path (picked in the app)
+      └── Azure Event Hubs (Kafka) ─────────┤
+      ┌─────────────────────────────────────┘
+      ▼
   bronze_hl7_raw            ← MANAGED Delta landing table
       │
       │  serverless Lakeflow Declarative Pipeline (DLT), enhanced autoscaling
