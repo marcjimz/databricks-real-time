@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/databricks-logo.png" alt="Databricks" width="360">
+  <img src="docs/assets/databricks-logo.png" alt="Databricks" width="420">
 </p>
 
 <h1 align="center">HL7 Real-Time Intelligence Demo</h1>
@@ -15,9 +15,10 @@
 This demo shows off the **flexibility, performance, and scalability** of Databricks
 pipelines on a live HL7 feed:
 
-- **Flexibility** — swap the front door, keep the house. The ingestion picker changes
-  only *how* records reach bronze; everything downstream is one shared pipeline and one
-  set of tables.
+- **Flexibility** — swap the front door, keep the house. Pick your ingestion path in the
+  app — **Zerobus Direct Write** or **Azure Event Hubs** (Kafka endpoint) — and only *how*
+  records reach bronze changes; everything downstream is one shared pipeline and one set
+  of tables.
 - **Performance** — every hop is measured. Per-hop and end-to-end latency stream to the
   dashboard at 1 Hz, so you watch generate → land → parse → serve in real time.
 - **Scalability** — the serverless DLT medallion uses enhanced, streaming-aware
@@ -26,9 +27,10 @@ pipelines on a live HL7 feed:
 ## Architecture
 
 ```
-HL7 generator (app)
-      │  Zerobus Direct Write (REST)
-      ▼
+HL7 generator (app)  ──┬── Zerobus Direct Write (REST) ─────────────┐
+                       │                                            │
+                       └── Azure Event Hubs (Kafka) ── DLT source ──┤
+                                                                    ▼
   bronze_hl7_raw            ← MANAGED Delta landing table
       │
       │  serverless Lakeflow Declarative Pipeline (DLT), enhanced autoscaling
@@ -209,16 +211,21 @@ Serverless DLT with enhanced autoscaling vs. the retired classic-compute job:
 ## Run it
 
 ```bash
-# validate + deploy the bundle (provisions the DLT pipeline)
+# validate + deploy the bundle (provisions the DLT pipeline + app)
 databricks bundle validate -p fe-vm-real-time-mode-demo
 databricks bundle deploy   -p fe-vm-real-time-mode-demo
 
 # reset to a clean slate before a demo (bronze + serving tables; DLT full-refresh)
-python scripts/reset_demo.py -p fe-vm-real-time-mode-demo --full-refresh
+python scripts/reset_demo.py --profile fe-vm-real-time-mode-demo --full-refresh
 
 # tests
 python -m pytest -q
 ```
+
+`bundle deploy` is idempotent — rerun it any time you change code or resources; it
+updates the DLT pipeline and app in place (no need to tear down first). Note the
+reset script takes `--profile` (not `-p`). Run `reset_demo.py` without
+`--full-refresh` to clear bronze + serving tables only, leaving DLT state intact.
 
 See `spec/hl7-rti-demo-spec-v4.md` for the full build spec and
 `docs/dlt-migration-plan.md` for the DLT migration rationale.
