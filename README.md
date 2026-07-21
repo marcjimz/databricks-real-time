@@ -1,12 +1,27 @@
-# HL7 Real-Time Intelligence Demo
+<p align="center">
+  <img src="docs/assets/databricks-logo.png" alt="Databricks" width="360">
+</p>
 
-**"Can Real-Time Intelligence scale on Databricks?"** — one Databricks App streams
-synthetic HL7 v2 events **Zerobus → bronze → silver → Lakebase serving**, with
-per-hop and end-to-end latency live on one screen.
+<h1 align="center">HL7 Real-Time Intelligence Demo</h1>
 
-**Thesis: swap the front door, keep the house.** The ingestion picker changes only
-*how* records reach bronze; everything downstream is one shared pipeline and one set
-of tables.
+<p align="center">
+  One Databricks App streams synthetic HL7 v2 events
+  <b>Zerobus → bronze → silver → Lakebase serving</b>,
+  with per-hop and end-to-end latency live on one screen.
+</p>
+
+---
+
+This demo shows off the **flexibility, performance, and scalability** of Databricks
+pipelines on a live HL7 feed:
+
+- **Flexibility** — swap the front door, keep the house. The ingestion picker changes
+  only *how* records reach bronze; everything downstream is one shared pipeline and one
+  set of tables.
+- **Performance** — every hop is measured. Per-hop and end-to-end latency stream to the
+  dashboard at 1 Hz, so you watch generate → land → parse → serve in real time.
+- **Scalability** — the serverless DLT medallion uses enhanced, streaming-aware
+  autoscaling, so throughput tracks the ingest rate and the backlog stays at zero.
 
 ## Architecture
 
