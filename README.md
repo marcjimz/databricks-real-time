@@ -198,15 +198,15 @@ psql "host=ep-steep-mountain-d2c3ahvt.database.us-east-1.cloud.databricks.com \
 
 ## Live results (validated)
 
-Serverless DLT with enhanced autoscaling vs. the retired classic-compute job:
+Serverless DLT with enhanced, streaming-aware autoscaling:
 
-| Metric | Classic compute | Serverless DLT |
-|---|---|---|
-| Backlog | 2.6M rows, building | **0** |
-| Serving freshness | 100–700 s | **~2 s** |
-| E2E p50 / p95 | 55–290 s | **~5 s / ~7 s** |
-| Throughput | stuck ~110/s (2 workers) | **tracks ingest, backlog 0** |
-| Autoscaling | ignored streaming backlog | streaming-aware, always-on |
+| Metric | Serverless DLT |
+|---|---|
+| Backlog | **0** |
+| Serving freshness | **~2 s** |
+| E2E p50 / p95 | **~5 s / ~7 s** |
+| Throughput | **tracks ingest, backlog 0** |
+| Autoscaling | streaming-aware, always-on |
 
 ## Run it
 
